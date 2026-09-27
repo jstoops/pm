@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "database": {
+    "engine": "SQLite",
+    "path": "/app/data/project_management.db",
+    "foreign_keys": true,
+    "container_storage": "A named Docker volume mounted at /app/data."
+  },
+  "password_security": {
+    "storage": "Store only an Argon2id encoded password hash in users.password_hash.",
+    "verification": "Verify the submitted password server-side against password_hash. Never return or log either value.",
+    "transport": "A password is transiently submitted to the same-origin login endpoint for verification. Non-local deployments must use HTTPS; client-side hashing is not a replacement for TLS because it creates a replayable password equivalent."
+  },
+  "tables": [
+    {
+      "name": "users",
+      "purpose": "Owns future application users. The MVP creates only the hardcoded user.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "primary_key": true,
+          "generated": "INTEGER PRIMARY KEY"
+        },
+        {
+          "name": "username",
+          "type": "TEXT",
+          "not_null": true,
+          "unique": true
+        },
+        {
+          "name": "password_hash",
+          "type": "TEXT",
+          "not_null": true,
+          "format": "Argon2id encoded hash"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "CURRENT_TIMESTAMP",
+          "purpose": "Tracks password or future contact-information changes."
+        }
+      ]
+    },
+    {
+      "name": "boards",
+      "purpose": "Stores one Kanban board for each user.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "primary_key": true,
+          "generated": "INTEGER PRIMARY KEY"
+        },
+        {
+          "name": "user_id",
+          "type": "INTEGER",
+          "not_null": true,
+          "unique": true,
+          "references": "users.id ON DELETE CASCADE"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      ]
+    },
+    {
+      "name": "board_columns",
+      "purpose": "Stores the fixed, renameable workflow columns and their display order.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "primary_key": true,
+          "generated": "INTEGER PRIMARY KEY"
+        },
+        {
+          "name": "board_id",
+          "type": "INTEGER",
+          "not_null": true,
+          "references": "boards.id ON DELETE CASCADE"
+        },
+        {
+          "name": "title",
+          "type": "TEXT",
+          "not_null": true,
+          "check": "length(trim(title)) > 0"
+        },
+        {
+          "name": "position",
+          "type": "INTEGER",
+          "not_null": true,
+          "check": "position >= 0"
+        }
+      ],
+      "constraints": [
+        "UNIQUE(board_id, position)"
+      ],
+      "indexes": [
+        "INDEX(board_id, position)"
+      ]
+    },
+    {
+      "name": "cards",
+      "purpose": "Stores cards, their column membership, and their order within a column.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "INTEGER",
+          "primary_key": true,
+          "generated": "INTEGER PRIMARY KEY"
+        },
+        {
+          "name": "column_id",
+          "type": "INTEGER",
+          "not_null": true,
+          "references": "board_columns.id ON DELETE CASCADE"
+        },
+        {
+          "name": "title",
+          "type": "TEXT",
+          "not_null": true,
+          "check": "length(trim(title)) > 0"
+        },
+        {
+          "name": "details",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "''"
+        },
+        {
+          "name": "position",
+          "type": "INTEGER",
+          "not_null": true,
+          "check": "position >= 0"
+        },
+        {
+          "name": "created_at",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        {
+          "name": "updated_at",
+          "type": "TEXT",
+          "not_null": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      ],
+      "constraints": [
+        "UNIQUE(column_id, position)"
+      ],
+      "indexes": [
+        "INDEX(column_id, position)"
+      ]
+    }
+  ],
+  "initial_board": {
+    "columns": [
+      "Backlog",
+      "Discovery",
+      "In Progress",
+      "Review",
+      "Done"
+    ],
+    "creation_rule": "Create the user and its board with these five ordered columns atomically when the hardcoded user first accesses board data."
+  },
+  "api_board_shape": {
+    "columns": [
+      {
+        "id": "1",
+        "title": "Backlog",
+        "cardIds": [
+          "1",
+          "2"
+        ]
+      }
+    ],
+    "cards": {
+      "1": {
+        "id": "1",
+        "title": "Align roadmap themes",
+        "details": "Draft quarterly themes with impact statements and metrics."
+      }
+    }
+  }
+}

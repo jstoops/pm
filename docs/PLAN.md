@@ -92,17 +92,18 @@
 
 ## Part 5: Database Design Approval
 
-- [ ] Propose a SQLite schema supporting multiple users and one board per user.
-- [ ] Model board columns, cards, ordering, and timestamps needed for persistent edits.
-- [ ] Define how the initial board is created for a new user.
-- [ ] Define JSON representations used by the API and AI features.
-- [ ] Document schema, migration/initialization approach, constraints, and example payloads in `docs/`.
+- [x] Propose a SQLite schema supporting multiple users and one board per user.
+- [x] Model board columns, cards, ordering, and timestamps needed for persistent edits.
+- [x] Define how the initial board is created for a new user.
+- [x] Define JSON representations used by the API and AI features.
+- [x] Document schema, migration/initialization approach, constraints, and example payloads in `docs/`.
 - [ ] Obtain formal user approval before implementing persistence.
 
 ### Tests
 
 - Validate proposed example JSON against the documented API model.
 - Review schema constraints against one-board-per-user and ordered-column/card requirements.
+- Define Part 6 tests that prove plaintext passwords are neither persisted, logged, nor returned, and that password hashes verify securely.
 
 ### Success Criteria
 
@@ -122,6 +123,8 @@
 - Unit tests using an isolated temporary SQLite database for initialization and first-board creation.
 - API tests for reads, column rename, card create/update/delete, card move/reorder, validation failures, and authentication boundaries.
 - Test that changes remain after a new application/database session.
+- Test that passwords are Argon2id-hashed before persistence and are never stored, returned, or logged as plaintext.
+- Test that the frontend does not retain passwords in browser storage; require HTTPS for non-local authentication traffic.
 
 ### Success Criteria
 
