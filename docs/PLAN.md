@@ -1,37 +1,202 @@
-# High level steps for project
+# Project Management MVP Plan
 
-Part 1: Plan
+## Delivery Rules
 
-Enrich this document to plan out each of these parts in detail, with substeps listed out as a checklist to be checked off by the agent, and with tests and success critieria for each. Also create an AGENTS.md file inside the frontend directory that describes the existing code there. Ensure the user checks and approves the plan.
+- Work through the parts in order. A part is complete only when its checklist, tests, and success criteria are satisfied.
+- Do not begin Part 2 until the user formally approves this plan.
+- Do not begin Part 6 until the user formally approves the database design from Part 5.
+- Keep credentials and `.env` files out of source control and browser bundles.
+- Automated AI tests must mock OpenRouter HTTP responses. A separate opt-in manual smoke-test command will make the live `2+2` request.
 
-Part 2: Scaffolding
+## Part 1: Plan and Frontend Inventory
 
-Set up the Docker infrastructure, the backend in backend/ with FastAPI, and write the start and stop scripts in the scripts/ directory. This should serve example static HTML to confirm that a 'hello world' example works running locally and also make an API call.
+- [x] Review the root project requirements.
+- [x] Review the existing frontend application, test setup, and board behavior.
+- [x] Create `frontend/AGENTS.md` documenting the existing frontend structure and conventions.
+- [x] Expand this document into implementation checklists, test expectations, and success criteria.
+- [ ] Obtain formal user approval of this plan before starting Part 2.
 
-Part 3: Add in Frontend
+### Tests
 
-Now update so that the frontend is statically built and served, so that the app has the demo Kanban board displayed at /. Comprehensive unit and integration tests.
+- Confirm documentation accurately identifies the current frontend commands and behavior.
 
-Part 4: Add in a fake user sign in experience
+### Success Criteria
 
-Now update so that on first hitting /, you need to log in with dummy credentials ("user", "password") in order to see the Kanban, and you can log out. Comprehensive tests.
+- This plan has formal user approval.
+- The frontend-specific instructions accurately describe the existing demo and its tests.
 
-Part 5: Database modeling
+## Part 2: Docker, FastAPI, and Local Scripts
 
-Now propose a database schema for the Kanban, saving it as JSON. Document the database approach in docs/ and get user sign off.
+- [ ] Inspect backend and script-specific instructions before making changes in those directories.
+- [ ] Create the Python project metadata for `uv` and FastAPI in `backend/`.
+- [ ] Implement a minimal FastAPI application with a health endpoint and an example API endpoint.
+- [ ] Configure the backend to serve a temporary static hello-world page at `/`.
+- [ ] Create a Dockerfile and Docker configuration that install Python dependencies with `uv` and expose the application port.
+- [ ] Add documented start and stop scripts for Windows, macOS, and Linux in `scripts/`.
+- [ ] Ensure scripts load root `.env` values without exposing them in output.
 
-Part 6: Backend
+### Tests
 
-Now add API routes to allow the backend to read and change the Kanban for a given user; test this thoroughly with backend unit tests. The database should be created if it doesn't exist.
+- Backend unit test: health endpoint returns a successful response.
+- Backend unit test: example API endpoint returns its documented JSON response.
+- Container smoke test: build the image, start it, request `/` and the example API endpoint, then stop it.
 
-Part 7: Frontend + Backend
+### Success Criteria
 
-Now have the frontend actually use the backend API, so that the app is a proper persistent Kanban board. Test very throughly.
+- A single Docker container starts locally using the platform-appropriate script.
+- `/` returns the temporary static page and the API endpoint responds successfully.
+- The container can be stopped by the corresponding stop script.
 
-Part 8: AI connectivity
+## Part 3: Serve the Existing Frontend
 
-Now allow the backend to make an AI call via OpenRouter. Test connectivity with a simple "2+2" test and ensure the AI call is working.
+- [ ] Configure Next.js for a static production export compatible with FastAPI static-file serving.
+- [ ] Update Docker build stages to install frontend dependencies, create the static export, and copy only the built assets to the runtime image.
+- [ ] Replace the temporary root page with the existing Kanban application.
+- [ ] Configure FastAPI static serving and fallback behavior required by the exported frontend.
+- [ ] Preserve the existing board's five columns, renaming, card creation/deletion, and drag/drop behavior.
 
-Part 9: Now extend the backend call so that it always calls the AI with the JSON of the Kanban board, plus the user's question (and conversation history). The AI should respond with Structured Outputs that includes the response to the user and optionaly an update to the Kanban. Test thoroughly.
+### Tests
 
-Part 10: Now add a beautiful sidebar widget to the UI supporting full AI chat, and allowing the LLM (as it determines) to update the Kanban based on its Structured Outputs. If the AI updates the Kanban, then the UI should refresh automatically.
+- Run existing frontend unit tests.
+- Run existing Playwright board tests against the container-served application.
+- Add an integration check that `/` is served by FastAPI and displays the Kanban heading.
+
+### Success Criteria
+
+- The Docker-served root route displays the existing Kanban demo.
+- All existing frontend unit and end-to-end behavior passes in the packaged application.
+
+## Part 4: MVP Authentication
+
+- [ ] Define a minimal server-managed authentication mechanism suitable for the local MVP.
+- [ ] Implement a login endpoint accepting only `user` and `password`.
+- [ ] Store authenticated state in a secure session mechanism; do not place the password in frontend code or storage.
+- [ ] Gate board routes and board API access behind authentication.
+- [ ] Add a login view matching the existing visual language.
+- [ ] Add logout and return the user to the login view.
+
+### Tests
+
+- Backend unit tests for successful login, rejected credentials, authenticated access, unauthenticated rejection, and logout.
+- Frontend tests for login form validation and logout controls.
+- Playwright flow for login, board visibility, logout, and protected-route behavior.
+
+### Success Criteria
+
+- Visiting `/` while unauthenticated presents login.
+- `user` / `password` grants access to the board.
+- Logout removes access until the user logs in again.
+
+## Part 5: Database Design Approval
+
+- [ ] Propose a SQLite schema supporting multiple users and one board per user.
+- [ ] Model board columns, cards, ordering, and timestamps needed for persistent edits.
+- [ ] Define how the initial board is created for a new user.
+- [ ] Define JSON representations used by the API and AI features.
+- [ ] Document schema, migration/initialization approach, constraints, and example payloads in `docs/`.
+- [ ] Obtain formal user approval before implementing persistence.
+
+### Tests
+
+- Validate proposed example JSON against the documented API model.
+- Review schema constraints against one-board-per-user and ordered-column/card requirements.
+
+### Success Criteria
+
+- The user formally approves the database design document.
+- The design supports the MVP and does not preclude future multiple-user operation.
+
+## Part 6: Persistent Kanban API
+
+- [ ] Add SQLite database initialization that creates the database and schema when absent.
+- [ ] Add data-access code for the authenticated user's single board.
+- [ ] Implement API routes to read the board and update column names, card contents, card membership, and card order.
+- [ ] Validate request payloads and return clear errors for invalid or unauthorized operations.
+- [ ] Ensure every route operates only on the authenticated user's board.
+
+### Tests
+
+- Unit tests using an isolated temporary SQLite database for initialization and first-board creation.
+- API tests for reads, column rename, card create/update/delete, card move/reorder, validation failures, and authentication boundaries.
+- Test that changes remain after a new application/database session.
+
+### Success Criteria
+
+- The database is created automatically when missing.
+- API changes persist and are returned in the board's documented JSON format.
+- One user's data cannot be read or changed through another user's session.
+
+## Part 7: Frontend Persistence Integration
+
+- [ ] Load the board from the authenticated backend API rather than `initialData` at runtime.
+- [ ] Replace local-only mutations with API-backed column and card operations.
+- [ ] Handle loading, save failures, and retryable user feedback without losing a valid board state.
+- [ ] Keep drag/drop responsive while preserving the server's resulting order.
+- [ ] Retain the static demo data only as server-side initial-board seed data, if required.
+
+### Tests
+
+- Frontend unit tests mock board API responses for loading, successful mutation, and failure states.
+- Backend integration tests cover the API contract consumed by the UI.
+- Playwright tests verify an edit survives reload and a moved card remains in its new column.
+
+### Success Criteria
+
+- All board edits made through the UI persist across a browser reload.
+- The UI displays a clear, recoverable state when an API operation fails.
+
+## Part 8: OpenRouter Connectivity
+
+- [ ] Add backend-only OpenRouter configuration using `OPENROUTER_API_KEY` and model `qwen/qwen3.8-27b:free`.
+- [ ] Implement an OpenRouter client with timeouts and actionable error handling.
+- [ ] Add an opt-in manual smoke-test command that sends `2+2` to OpenRouter and reports the response without printing credentials.
+- [ ] Keep the smoke-test command separate from the normal automated test suite.
+
+### Tests
+
+- Unit tests mock HTTP requests and verify model selection, request construction, success parsing, and error handling.
+- Manual smoke test: with a valid root `.env`, the explicit command returns a response to `2+2`.
+
+### Success Criteria
+
+- Automated tests run without network access or an API key.
+- The documented manual smoke-test command confirms live OpenRouter connectivity when intentionally invoked.
+
+## Part 9: AI Board Commands and Structured Output
+
+- [ ] Define a versioned structured response schema containing assistant text and an optional complete or patch-style board update.
+- [ ] Include the current board JSON, authenticated user's question, and bounded conversation history in each model request.
+- [ ] Validate model output against the schema before persisting any board change.
+- [ ] Apply valid AI-requested changes through the same service layer used by board APIs.
+- [ ] Reject invalid, unauthorized, or malformed AI changes without altering the board.
+
+### Tests
+
+- Mocked OpenRouter tests for conversational replies without updates, valid card/column updates, multiple updates, and malformed output.
+- Database/API tests confirm valid AI updates persist atomically and invalid updates make no changes.
+- Test the request payload includes current board state and bounded history.
+
+### Success Criteria
+
+- The backend returns validated assistant text and, when appropriate, a persisted updated board.
+- No model response can mutate data unless it conforms to the documented structured schema.
+
+## Part 10: AI Chat Sidebar
+
+- [ ] Design and implement a responsive sidebar integrated with the authenticated board workspace.
+- [ ] Display conversation history, message submission, pending state, errors, and assistant responses.
+- [ ] Send chat requests to the authenticated backend endpoint.
+- [ ] Refresh board state from the API after a successful AI-driven update.
+- [ ] Ensure the desktop sidebar and mobile presentation preserve access to both chat and board controls.
+
+### Tests
+
+- Component tests for message submission, loading, error, and assistant-response states.
+- Mocked integration tests for chat responses with and without board updates.
+- Playwright tests verify that an AI update is reflected in the board without a manual reload.
+
+### Success Criteria
+
+- A signed-in user can hold a chat conversation from the board workspace.
+- Valid AI changes are visible on the board immediately after the response.
+- The completed application runs locally in Docker and all automated checks pass without live AI calls.
