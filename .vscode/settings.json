@@ -4,6 +4,13 @@
       "approve": true,
       "matchCommandLine": true
     },
-    "docker run": true
+    "docker run": true,
+    "docker compose": true,
+    "Push-Location": true,
+    "npm run test:unit": true,
+    "Pop-Location": true,
+    "npm run lint": true,
+    "npm audit": true,
+    "npm install": true
   }
 }

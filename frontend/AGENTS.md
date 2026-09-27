@@ -2,7 +2,7 @@
 
 ## Current Application
 
-This directory contains the initial frontend-only Kanban demo. It uses Next.js 16, React 19, TypeScript, Tailwind CSS 4, and `@dnd-kit` for sortable drag and drop. It has no authentication, API client, or persistence yet.
+This directory contains the static-exported Kanban frontend. It uses Next.js 16, React 19, TypeScript, Tailwind CSS 4, and `@dnd-kit` for sortable drag and drop. It has no authentication, API client, or persistence yet.
 
 - `src/app/page.tsx` renders `KanbanBoard` at `/`.
 - `src/components/KanbanBoard.tsx` owns in-memory board state and drag/drop orchestration.
@@ -11,6 +11,7 @@ This directory contains the initial frontend-only Kanban demo. It uses Next.js 1
 - `src/components/KanbanCardPreview.tsx` is used for the drag overlay.
 - `src/components/NewCardForm.tsx` collects a title and optional details for a new card.
 - `src/lib/kanban.ts` defines `Card`, `Column`, `BoardData`, seed data, move logic, and client-side ID generation.
+- `next.config.ts` enables Next.js static export. The root Dockerfile builds `out/` and copies it into FastAPI's static directory.
 
 ## Existing Behavior
 
@@ -37,6 +38,7 @@ npm run build
 
 - Unit tests use Vitest and React Testing Library. Board component tests are in `src/components/KanbanBoard.test.tsx`; board utility tests are in `src/lib/kanban.test.ts`.
 - End-to-end tests use Playwright in `tests/kanban.spec.ts` and cover initial rendering, card creation, and drag/drop movement.
+- Set `PLAYWRIGHT_BASE_URL=http://127.0.0.1:8000` to run Playwright against the Docker-served application instead of a local Next.js development server.
 - Preserve stable accessible labels and `data-testid` values where practical because existing tests use them.
 
 ## Change Guidelines

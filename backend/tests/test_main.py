@@ -14,7 +14,7 @@ async def test_root_serves_static_page() -> None:
         response = await client.get("/")
 
     assert response.status_code == 200
-    assert "Project Management MVP" in response.text
+    assert "Kanban Studio" in response.text
 
 
 @pytest.mark.anyio

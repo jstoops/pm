@@ -49,17 +49,17 @@
 
 ## Part 3: Serve the Existing Frontend
 
-- [ ] Configure Next.js for a static production export compatible with FastAPI static-file serving.
-- [ ] Update Docker build stages to install frontend dependencies, create the static export, and copy only the built assets to the runtime image.
-- [ ] Replace the temporary root page with the existing Kanban application.
-- [ ] Configure FastAPI static serving and fallback behavior required by the exported frontend.
-- [ ] Preserve the existing board's five columns, renaming, card creation/deletion, and drag/drop behavior.
+- [x] Configure Next.js for a static production export compatible with FastAPI static-file serving.
+- [x] Update Docker build stages to install frontend dependencies, create the static export, and copy only the built assets to the runtime image.
+- [x] Replace the temporary root page with the existing Kanban application.
+- [x] Configure FastAPI static serving and fallback behavior required by the exported frontend.
+- [x] Preserve the existing board's five columns, renaming, card creation/deletion, and drag/drop behavior.
 
 ### Tests
 
-- Run existing frontend unit tests.
-- Run existing Playwright board tests against the container-served application.
-- Add an integration check that `/` is served by FastAPI and displays the Kanban heading.
+- [x] Run existing frontend unit tests.
+- [x] Run existing Playwright board tests against the container-served application.
+- [x] Add an integration check that `/` is served by FastAPI and displays the Kanban heading.
 
 ### Success Criteria
 
