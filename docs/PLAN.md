@@ -97,7 +97,7 @@
 - [x] Define how the initial board is created for a new user.
 - [x] Define JSON representations used by the API and AI features.
 - [x] Document schema, migration/initialization approach, constraints, and example payloads in `docs/`.
-- [ ] Obtain formal user approval before implementing persistence.
+- [x] Obtain formal user approval before implementing persistence.
 
 ### Tests
 
@@ -112,19 +112,19 @@
 
 ## Part 6: Persistent Kanban API
 
-- [ ] Add SQLite database initialization that creates the database and schema when absent.
-- [ ] Add data-access code for the authenticated user's single board.
-- [ ] Implement API routes to read the board and update column names, card contents, card membership, and card order.
-- [ ] Validate request payloads and return clear errors for invalid or unauthorized operations.
-- [ ] Ensure every route operates only on the authenticated user's board.
+- [x] Add SQLite database initialization that creates the database and schema when absent.
+- [x] Add data-access code for the authenticated user's single board.
+- [x] Implement API routes to read and change board columns, cards, membership, and order.
+- [x] Validate request payloads and return clear errors for invalid or unauthorized operations.
+- [x] Ensure every route operates only on the authenticated user's board.
 
 ### Tests
 
-- Unit tests using an isolated temporary SQLite database for initialization and first-board creation.
-- API tests for reads, column rename, card create/update/delete, card move/reorder, validation failures, and authentication boundaries.
-- Test that changes remain after a new application/database session.
-- Test that passwords are Argon2id-hashed before persistence and are never stored, returned, or logged as plaintext.
-- Test that the frontend does not retain passwords in browser storage; require HTTPS for non-local authentication traffic.
+- [x] Unit tests using an isolated temporary SQLite database for initialization and first-board creation.
+- [x] API tests for reads, column rename, card create/update/delete, card move/reorder, validation failures, and authentication boundaries.
+- [x] Test that changes remain after a new application/database session.
+- [x] Test that passwords are Argon2id-hashed before persistence and are never stored, returned, or logged as plaintext.
+- [x] Test that the frontend does not retain passwords in browser storage; require HTTPS for non-local authentication traffic.
 
 ### Success Criteria
 

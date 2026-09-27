@@ -10,7 +10,9 @@ The backend is a minimal FastAPI service packaged by the root Docker image. It i
 - `GET /api/example` returns a simple JSON message used to prove API connectivity.
 - `POST /api/auth/login` accepts only `user` / `password` and establishes a signed, HTTP-only session cookie.
 - `GET /api/auth/session` reports whether the request is authenticated; `POST /api/auth/logout` clears the session.
-- `tests/` contains backend API and static-root tests using HTTPX ASGI transport.
+- `GET /api/board` returns the authenticated user's persisted board. The column/card routes under `/api/board` rename, create, update, delete, and move board data.
+- `app/database.py` owns SQLite initialization, Argon2id verification, seed data, and board mutations.
+- `tests/` contains backend API and static-root tests using HTTPX ASGI transport, including temporary SQLite databases for persistence coverage.
 
 ## Commands
 
@@ -29,3 +31,4 @@ The root start scripts build and start the application at `http://localhost:8000
 - Do not read, return, or log secrets from the root `.env` file.
 - Keep the root static mount after API route definitions so `/api` routes are never handled as static files.
 - Keep board routes and future board API endpoints behind `require_authenticated`.
+- Local development uses HTTP. Non-local deployments must terminate TLS 1.2+, prefer TLS 1.3, and set `SESSION_HTTPS_ONLY=true`.

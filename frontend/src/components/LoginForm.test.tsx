@@ -43,4 +43,26 @@ describe("LoginForm", () => {
 
     expect(onAuthenticated).toHaveBeenCalledOnce();
   });
+
+  it("does not retain the password in browser storage", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.clear();
+    sessionStorage.clear();
+    render(<LoginForm onAuthenticated={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Username"), "user");
+    await user.type(screen.getByLabelText("Password"), "password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const storageContents = (storage: Storage) =>
+      Array.from({ length: storage.length }, (_, index) => {
+        const key = storage.key(index) ?? "";
+        return `${key}:${storage.getItem(key) ?? ""}`;
+      }).join("\n");
+
+    expect(storageContents(localStorage)).not.toContain("password");
+    expect(storageContents(sessionStorage)).not.toContain("password");
+  });
 });

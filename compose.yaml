@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "${APP_PORT:-8000}:8000"
+    volumes:
+      - app-data:/app/data
     healthcheck:
       test:
         - CMD
@@ -15,3 +17,6 @@ services:
       timeout: 2s
       retries: 10
       start_period: 2s
+
+volumes:
+  app-data:
