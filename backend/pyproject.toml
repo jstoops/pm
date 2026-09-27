@@ -5,6 +5,7 @@ description = "Backend for the Project Management MVP"
 requires-python = ">=3.13"
 dependencies = [
   "fastapi[standard]>=0.115,<1",
+  "itsdangerous>=2.2,<3",
 ]
 
 [dependency-groups]

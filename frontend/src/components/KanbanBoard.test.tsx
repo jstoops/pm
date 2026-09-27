@@ -1,5 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { vi } from "vitest";
 import { KanbanBoard } from "@/components/KanbanBoard";
 
 const getFirstColumn = () => screen.getAllByTestId(/column-/i)[0];
@@ -42,5 +43,15 @@ describe("KanbanBoard", () => {
     await userEvent.click(deleteButton);
 
     expect(within(column).queryByText("New card")).not.toBeInTheDocument();
+  });
+
+  it("provides a logout control", async () => {
+    const user = userEvent.setup();
+    const onLogout = vi.fn();
+    render(<KanbanBoard onLogout={onLogout} />);
+
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(onLogout).toHaveBeenCalledOnce();
   });
 });

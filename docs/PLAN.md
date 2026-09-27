@@ -68,24 +68,27 @@
 
 ## Part 4: MVP Authentication
 
-- [ ] Define a minimal server-managed authentication mechanism suitable for the local MVP.
-- [ ] Implement a login endpoint accepting only `user` and `password`.
-- [ ] Store authenticated state in a secure session mechanism; do not place the password in frontend code or storage.
-- [ ] Gate board routes and board API access behind authentication.
-- [ ] Add a login view matching the existing visual language.
-- [ ] Add logout and return the user to the login view.
+- [x] Define a minimal server-managed authentication mechanism suitable for the local MVP.
+- [x] Implement a login endpoint accepting only `user` and `password`.
+- [x] Store authenticated state in a secure session mechanism; do not place the password in frontend code or storage.
+- [x] Gate board routes and board API access behind authentication.
+- [x] Add a login view matching the existing visual language.
+- [x] Add logout and return the user to the login view.
+- [x] Preserve Kanban data in memory for the authenticated browser session.
 
 ### Tests
 
-- Backend unit tests for successful login, rejected credentials, authenticated access, unauthenticated rejection, and logout.
-- Frontend tests for login form validation and logout controls.
-- Playwright flow for login, board visibility, logout, and protected-route behavior.
+- [x] Backend unit tests for successful login, rejected credentials, authenticated access, unauthenticated rejection, and logout.
+- [x] Frontend tests for login form validation and logout controls.
+- [x] Playwright flow for login, board visibility, logout, and protected-route behavior.
+- [x] Playwright test that board changes survive a page reload within the browser session.
 
 ### Success Criteria
 
 - Visiting `/` while unauthenticated presents login.
 - `user` / `password` grants access to the board.
-- Logout removes access until the user logs in again.
+- Logout removes board access until the user logs in again.
+- Board changes remain available after a reload and re-login until the browser session ends.
 
 ## Part 5: Database Design Approval
 

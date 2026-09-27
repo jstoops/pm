@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -15,9 +15,41 @@ import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
 import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
 
-export const KanbanBoard = () => {
+type KanbanBoardProps = {
+  onLogout?: () => void | Promise<void>;
+};
+
+const BOARD_STORAGE_KEY = "kanban-board";
+
+const logout = async () => {
+  const response = await fetch("/api/auth/logout", { method: "POST" });
+  if (response.ok) {
+    window.location.assign("/");
+  }
+};
+
+export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
   const [board, setBoard] = useState<BoardData>(() => initialData);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [isBoardLoaded, setIsBoardLoaded] = useState(false);
+
+  useEffect(() => {
+    const storedBoard = sessionStorage.getItem(BOARD_STORAGE_KEY);
+    if (storedBoard) {
+      try {
+        setBoard(JSON.parse(storedBoard) as BoardData);
+      } catch {
+        sessionStorage.removeItem(BOARD_STORAGE_KEY);
+      }
+    }
+    setIsBoardLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (isBoardLoaded) {
+      sessionStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(board));
+    }
+  }, [board, isBoardLoaded]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -80,9 +112,9 @@ export const KanbanBoard = () => {
         columns: prev.columns.map((column) =>
           column.id === columnId
             ? {
-                ...column,
-                cardIds: column.cardIds.filter((id) => id !== cardId),
-              }
+              ...column,
+              cardIds: column.cardIds.filter((id) => id !== cardId),
+            }
             : column
         ),
       };
@@ -111,13 +143,22 @@ export const KanbanBoard = () => {
                 and capture quick notes without getting buried in settings.
               </p>
             </div>
-            <div className="rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-5 py-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--gray-text)]">
-                Focus
-              </p>
-              <p className="mt-2 text-lg font-semibold text-[var(--primary-blue)]">
-                One board. Five columns. Zero clutter.
-              </p>
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-5 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--gray-text)]">
+                  Focus
+                </p>
+                <p className="mt-2 text-lg font-semibold text-[var(--primary-blue)]">
+                  One board. Five columns. Zero clutter.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void onLogout()}
+                className="border border-[var(--stroke)] bg-white px-4 py-3 text-sm font-semibold text-[var(--navy-dark)] transition hover:border-[var(--secondary-purple)] hover:text-[var(--secondary-purple)]"
+              >
+                Log out
+              </button>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-4">
