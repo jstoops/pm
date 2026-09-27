@@ -14,7 +14,7 @@
 - [x] Review the existing frontend application, test setup, and board behavior.
 - [x] Create `frontend/AGENTS.md` documenting the existing frontend structure and conventions.
 - [x] Expand this document into implementation checklists, test expectations, and success criteria.
-- [ ] Obtain formal user approval of this plan before starting Part 2.
+- [x] Obtain formal user approval of this plan before starting Part 2.
 
 ### Tests
 
@@ -27,19 +27,19 @@
 
 ## Part 2: Docker, FastAPI, and Local Scripts
 
-- [ ] Inspect backend and script-specific instructions before making changes in those directories.
-- [ ] Create the Python project metadata for `uv` and FastAPI in `backend/`.
-- [ ] Implement a minimal FastAPI application with a health endpoint and an example API endpoint.
-- [ ] Configure the backend to serve a temporary static hello-world page at `/`.
-- [ ] Create a Dockerfile and Docker configuration that install Python dependencies with `uv` and expose the application port.
-- [ ] Add documented start and stop scripts for Windows, macOS, and Linux in `scripts/`.
-- [ ] Ensure scripts load root `.env` values without exposing them in output.
+- [x] Inspect backend and script-specific instructions before making changes in those directories.
+- [x] Create the Python project metadata for `uv` and FastAPI in `backend/`.
+- [x] Implement a minimal FastAPI application with a health endpoint and an example API endpoint.
+- [x] Configure the backend to serve a temporary static hello-world page at `/`.
+- [x] Create a Dockerfile and Docker configuration that install Python dependencies with `uv` and expose the application port.
+- [x] Add documented start and stop scripts for Windows, macOS, and Linux in `scripts/`.
+- [x] Ensure scripts load root `.env` values without exposing them in output.
 
 ### Tests
 
-- Backend unit test: health endpoint returns a successful response.
-- Backend unit test: example API endpoint returns its documented JSON response.
-- Container smoke test: build the image, start it, request `/` and the example API endpoint, then stop it.
+- [x] Backend unit test: health endpoint returns a successful response.
+- [x] Backend unit test: example API endpoint returns its documented JSON response.
+- [x] Container smoke test: build the image, start it, request `/` and the example API endpoint, then stop it.
 
 ### Success Criteria
 
