@@ -46,6 +46,37 @@ test.describe("authenticated board", () => {
     await expect(page.getByText("Session card")).toBeVisible();
   });
 
+  test("drops a card into an empty column at the visible drop zone", async ({ page }) => {
+    await page.setViewportSize({ width: 1624, height: 1069 });
+    const discovery = page.getByTestId("column-col-discovery");
+    await page
+      .getByTestId("card-card-3")
+      .getByRole("button", { name: /delete prototype analytics view/i })
+      .click();
+
+    const source = page.getByTestId("card-card-1");
+    const target = page.getByText("Drop a card here");
+    const sourceBox = await source.boundingBox();
+    const targetBox = await target.boundingBox();
+    if (!sourceBox || !targetBox) {
+      throw new Error("Unable to resolve drag coordinates.");
+    }
+
+    await page.mouse.move(
+      sourceBox.x + sourceBox.width / 2,
+      sourceBox.y + sourceBox.height / 2
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      targetBox.x + targetBox.width / 2,
+      targetBox.y + targetBox.height / 2,
+      { steps: 12 }
+    );
+    await page.mouse.up();
+
+    await expect(discovery.getByTestId("card-card-1")).toBeVisible();
+  });
+
   test("moves a card between columns", async ({ page }) => {
     const card = page.getByTestId("card-card-1");
     const targetColumn = page.getByTestId("column-col-review");

@@ -5,9 +5,11 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
-  closestCorners,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
@@ -21,6 +23,29 @@ type KanbanBoardProps = {
 
 const BOARD_STORAGE_KEY = "kanban-board";
 
+const collisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  return pointerCollisions.length > 0 ? pointerCollisions : rectIntersection(args);
+};
+
+const loadBoard = (): BoardData => {
+  if (typeof window === "undefined") {
+    return initialData;
+  }
+
+  const storedBoard = sessionStorage.getItem(BOARD_STORAGE_KEY);
+  if (!storedBoard) {
+    return initialData;
+  }
+
+  try {
+    return JSON.parse(storedBoard) as BoardData;
+  } catch {
+    sessionStorage.removeItem(BOARD_STORAGE_KEY);
+    return initialData;
+  }
+};
+
 const logout = async () => {
   const response = await fetch("/api/auth/logout", { method: "POST" });
   if (response.ok) {
@@ -29,27 +54,12 @@ const logout = async () => {
 };
 
 export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
-  const [board, setBoard] = useState<BoardData>(() => initialData);
+  const [board, setBoard] = useState<BoardData>(loadBoard);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
-  const [isBoardLoaded, setIsBoardLoaded] = useState(false);
 
   useEffect(() => {
-    const storedBoard = sessionStorage.getItem(BOARD_STORAGE_KEY);
-    if (storedBoard) {
-      try {
-        setBoard(JSON.parse(storedBoard) as BoardData);
-      } catch {
-        sessionStorage.removeItem(BOARD_STORAGE_KEY);
-      }
-    }
-    setIsBoardLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    if (isBoardLoaded) {
-      sessionStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(board));
-    }
-  }, [board, isBoardLoaded]);
+    sessionStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(board));
+  }, [board]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -176,7 +186,7 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
 
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCorners}
+          collisionDetection={collisionDetection}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
