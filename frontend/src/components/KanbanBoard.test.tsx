@@ -1,57 +1,159 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 import { KanbanBoard } from "@/components/KanbanBoard";
+import type { BoardData } from "@/lib/kanban";
 
 const getFirstColumn = () => screen.getAllByTestId(/column-/i)[0];
+let board: BoardData;
+
+const response = () => new Response(JSON.stringify(board), { status: 200 });
+
+const apiBoard = (): BoardData => ({
+  columns: [
+    { id: "1", title: "Backlog", cardIds: ["1", "2"] },
+    { id: "2", title: "Discovery", cardIds: [] },
+    { id: "3", title: "In Progress", cardIds: [] },
+    { id: "4", title: "Review", cardIds: [] },
+    { id: "5", title: "Done", cardIds: [] },
+  ],
+  cards: {
+    "1": { id: "1", title: "Roadmap", details: "Plan the next release." },
+    "2": { id: "2", title: "Research", details: "Collect user feedback." },
+  },
+});
+
+beforeEach(() => {
+  board = apiBoard();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/api/board" && !init?.method) {
+        return response();
+      }
+
+      const payload = init?.body ? JSON.parse(init.body as string) : undefined;
+      if (url.startsWith("/api/board/columns/")) {
+        const columnId = url.split("/").at(-1);
+        board.columns = board.columns.map((column) =>
+          column.id === columnId ? { ...column, title: payload.title } : column
+        );
+      } else if (url === "/api/board/cards") {
+        const cardId = "card-test";
+        board.cards[cardId] = { id: cardId, title: payload.title, details: payload.details };
+        board.columns = board.columns.map((column) =>
+          column.id === String(payload.column_id)
+            ? { ...column, cardIds: [...column.cardIds, cardId] }
+            : column
+        );
+      } else if (init?.method === "DELETE") {
+        const cardId = url.split("/").at(-1) ?? "";
+        delete board.cards[cardId];
+        board.columns = board.columns.map((column) => ({
+          ...column,
+          cardIds: column.cardIds.filter((id) => id !== cardId),
+        }));
+      }
+      return response();
+    })
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+const renderBoard = async (onLogout?: () => void) => {
+  render(<KanbanBoard onLogout={onLogout} />);
+  await screen.findByTestId("column-1");
+};
 
 describe("KanbanBoard", () => {
-  it("renders five columns", () => {
-    render(<KanbanBoard />);
+  it("loads five columns from the API", async () => {
+    await renderBoard();
+
     expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
   });
 
   it("renames a column", async () => {
-    render(<KanbanBoard />);
+    const user = userEvent.setup();
+    await renderBoard();
     const column = getFirstColumn();
     const input = within(column).getByLabelText("Column title");
-    await userEvent.clear(input);
-    await userEvent.type(input, "New Name");
+    await user.clear(input);
+    await user.type(input, "New Name");
+    await user.tab();
+
     expect(input).toHaveValue("New Name");
   });
 
   it("adds and removes a card", async () => {
-    render(<KanbanBoard />);
+    const user = userEvent.setup();
+    await renderBoard();
     const column = getFirstColumn();
     const addButton = within(column).getByRole("button", {
       name: /add a card/i,
     });
-    await userEvent.click(addButton);
+    await user.click(addButton);
 
     const titleInput = within(column).getByPlaceholderText(/card title/i);
-    await userEvent.type(titleInput, "New card");
+    await user.type(titleInput, "New card");
     const detailsInput = within(column).getByPlaceholderText(/details/i);
-    await userEvent.type(detailsInput, "Notes");
+    await user.type(detailsInput, "Notes");
 
-    await userEvent.click(within(column).getByRole("button", { name: /add card/i }));
+    await user.click(within(column).getByRole("button", { name: /add card/i }));
 
-    expect(within(column).getByText("New card")).toBeInTheDocument();
+    expect(await within(column).findByText("New card")).toBeInTheDocument();
 
     const deleteButton = within(column).getByRole("button", {
       name: /delete new card/i,
     });
-    await userEvent.click(deleteButton);
+    await user.click(deleteButton);
 
-    expect(within(column).queryByText("New card")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(column).queryByText("New card")).not.toBeInTheDocument();
+    });
   });
 
   it("provides a logout control", async () => {
     const user = userEvent.setup();
     const onLogout = vi.fn();
-    render(<KanbanBoard onLogout={onLogout} />);
+    await renderBoard(onLogout);
 
     await user.click(screen.getByRole("button", { name: "Log out" }));
 
     expect(onLogout).toHaveBeenCalledOnce();
+  });
+
+  it("shows a recoverable error when loading fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockRejectedValueOnce(new Error("Network error"))
+        .mockResolvedValueOnce(new Response(JSON.stringify(board), { status: 200 }))
+    );
+    const user = userEvent.setup();
+    render(<KanbanBoard />);
+
+    expect(await screen.findByText(/unable to load the board/i)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByTestId("column-1")).toBeVisible();
+  });
+
+  it("keeps the board visible and reports a failed save", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(board), { status: 200 }));
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
+    await renderBoard();
+
+    const input = within(getFirstColumn()).getByLabelText("Column title");
+    await user.clear(input);
+    await user.type(input, "Blocked rename");
+    await user.tab();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/board is unchanged/i);
+    expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
   });
 });

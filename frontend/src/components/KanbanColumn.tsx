@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { Card, Column } from "@/lib/kanban";
@@ -13,6 +14,26 @@ type KanbanColumnProps = {
   onDeleteCard: (columnId: string, cardId: string) => void;
 };
 
+type ColumnTitleProps = {
+  columnId: string;
+  initialTitle: string;
+  onRename: (columnId: string, title: string) => void;
+};
+
+const ColumnTitle = ({ columnId, initialTitle, onRename }: ColumnTitleProps) => {
+  const [title, setTitle] = useState(initialTitle);
+
+  return (
+    <input
+      value={title}
+      onChange={(event) => setTitle(event.target.value)}
+      onBlur={() => onRename(columnId, title.trim())}
+      className="mt-3 w-full bg-transparent font-display text-lg font-semibold text-[var(--navy-dark)] outline-none"
+      aria-label="Column title"
+    />
+  );
+};
+
 export const KanbanColumn = ({
   column,
   cards,
@@ -20,7 +41,10 @@ export const KanbanColumn = ({
   onAddCard,
   onDeleteCard,
 }: KanbanColumnProps) => {
-  const { setNodeRef, isOver } = useDroppable({ id: column.id });
+  const { setNodeRef, isOver } = useDroppable({
+    id: column.id,
+    data: { type: "column" },
+  });
 
   return (
     <section
@@ -39,11 +63,11 @@ export const KanbanColumn = ({
               {cards.length} cards
             </span>
           </div>
-          <input
-            value={column.title}
-            onChange={(event) => onRename(column.id, event.target.value)}
-            className="mt-3 w-full bg-transparent font-display text-lg font-semibold text-[var(--navy-dark)] outline-none"
-            aria-label="Column title"
+          <ColumnTitle
+            key={column.title}
+            columnId={column.id}
+            initialTitle={column.title}
+            onRename={onRename}
           />
         </div>
       </div>

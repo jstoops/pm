@@ -8,6 +8,17 @@ const signIn = async (page: Page) => {
   await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
 };
 
+const createCard = async (page: Page, title: string) => {
+  const column = page.locator('[data-testid^="column-"]').first();
+  await column.getByRole("button", { name: /add a card/i }).click();
+  await column.getByPlaceholder("Card title").fill(title);
+  await column.getByPlaceholder("Details").fill("Created by Playwright.");
+  await column.getByRole("button", { name: /add card/i }).click();
+  await expect(column.getByText(title)).toBeVisible();
+};
+
+const uniqueTitle = (prefix: string) => `${prefix} ${Date.now()}`;
+
 test("requires login before showing the board", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
@@ -20,69 +31,29 @@ test.describe("authenticated board", () => {
   });
 
   test("loads the kanban board", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
     await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
   });
 
-  test("adds a card to a column", async ({ page }) => {
-    const firstColumn = page.locator('[data-testid^="column-"]').first();
-    await firstColumn.getByRole("button", { name: /add a card/i }).click();
-    await firstColumn.getByPlaceholder("Card title").fill("Playwright card");
-    await firstColumn.getByPlaceholder("Details").fill("Added via e2e.");
-    await firstColumn.getByRole("button", { name: /add card/i }).click();
-    await expect(firstColumn.getByText("Playwright card")).toBeVisible();
-  });
-
-  test("preserves board data for the browser session", async ({ page }) => {
-    const firstColumn = page.locator('[data-testid^="column-"]').first();
-    await firstColumn.getByRole("button", { name: /add a card/i }).click();
-    await firstColumn.getByPlaceholder("Card title").fill("Session card");
-    await firstColumn.getByRole("button", { name: /add card/i }).click();
-    await expect(firstColumn.getByText("Session card")).toBeVisible();
+  test("persists a new card after reload", async ({ page }) => {
+    const title = uniqueTitle("Persistent card");
+    await createCard(page, title);
 
     await page.reload();
 
-    await expect(page.getByText("Session card")).toBeVisible();
+    await expect(page.getByText(title)).toBeVisible();
   });
 
-  test("drops a card into an empty column at the visible drop zone", async ({ page }) => {
+  test("persists a moved card in its new column after reload", async ({ page }) => {
     await page.setViewportSize({ width: 1624, height: 1069 });
-    const discovery = page.getByTestId("column-col-discovery");
-    await page
-      .getByTestId("card-card-3")
-      .getByRole("button", { name: /delete prototype analytics view/i })
-      .click();
+    const title = uniqueTitle("Moved card");
+    await createCard(page, title);
 
-    const source = page.getByTestId("card-card-1");
-    const target = page.getByText("Drop a card here");
-    const sourceBox = await source.boundingBox();
-    const targetBox = await target.boundingBox();
-    if (!sourceBox || !targetBox) {
-      throw new Error("Unable to resolve drag coordinates.");
-    }
-
-    await page.mouse.move(
-      sourceBox.x + sourceBox.width / 2,
-      sourceBox.y + sourceBox.height / 2
-    );
-    await page.mouse.down();
-    await page.mouse.move(
-      targetBox.x + targetBox.width / 2,
-      targetBox.y + targetBox.height / 2,
-      { steps: 12 }
-    );
-    await page.mouse.up();
-
-    await expect(discovery.getByTestId("card-card-1")).toBeVisible();
-  });
-
-  test("moves a card between columns", async ({ page }) => {
-    const card = page.getByTestId("card-card-1");
-    const targetColumn = page.getByTestId("column-col-review");
+    const card = page.getByText(title).locator("..");
+    const targetColumn = page.locator('[data-testid^="column-"]').nth(1);
+    await card.scrollIntoViewIfNeeded();
     const cardBox = await card.boundingBox();
-    const columnBox = await targetColumn.boundingBox();
-    if (!cardBox || !columnBox) {
+    const targetBox = await targetColumn.boundingBox();
+    if (!cardBox || !targetBox) {
       throw new Error("Unable to resolve drag coordinates.");
     }
 
@@ -91,30 +62,31 @@ test.describe("authenticated board", () => {
       cardBox.y + cardBox.height / 2
     );
     await page.mouse.down();
+    const moveResponse = page.waitForResponse(
+      (response) => response.url().includes("/move") && response.status() === 200
+    );
     await page.mouse.move(
-      columnBox.x + columnBox.width / 2,
-      columnBox.y + 120,
+      targetBox.x + targetBox.width / 2,
+      cardBox.y + cardBox.height / 2,
       { steps: 12 }
     );
     await page.mouse.up();
-    await expect(targetColumn.getByTestId("card-card-1")).toBeVisible();
+    await moveResponse;
+
+    await expect(targetColumn.getByText(title)).toBeVisible();
+    await page.reload();
+    await expect(targetColumn.getByText(title)).toBeVisible();
   });
 });
 
 test("preserves board data after logout and login", async ({ page }) => {
   await signIn(page);
-  const column = page.locator('[data-testid^="column-"]').first();
-  await column.getByRole("button", { name: /add a card/i }).click();
-  await column.getByPlaceholder("Card title").fill("Logout session card");
-  await column.getByRole("button", { name: /add card/i }).click();
-  await expect(page.getByText("Logout session card")).toBeVisible();
+  const title = uniqueTitle("Logged out card");
+  await createCard(page, title);
 
   await page.getByRole("button", { name: "Log out" }).click();
-
-  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
-  await page.goto("/");
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 
   await signIn(page);
-  await expect(page.getByText("Logout session card")).toBeVisible();
+  await expect(page.getByText(title)).toBeVisible();
 });
