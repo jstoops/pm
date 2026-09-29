@@ -5,8 +5,6 @@ import {
   DndContext,
   DragOverlay,
   PointerSensor,
-  pointerWithin,
-  rectIntersection,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -15,50 +13,54 @@ import {
 } from "@dnd-kit/core";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
-import { moveCard, type BoardData } from "@/lib/kanban";
+import { moveCard, parseDragId, type BoardData } from "@/lib/kanban";
 
 type KanbanBoardProps = {
   onLogout?: () => void | Promise<void>;
 };
 
-const collisionDetection: CollisionDetection = (args) => {
-  const pointerCollisions = pointerWithin(args);
-  const columnCollision = pointerCollisions.find(
-    ({ id }) =>
-      args.droppableContainers.find((container) => container.id === id)?.data
-        .current?.type === "column"
-  );
-
-  if (columnCollision && args.pointerCoordinates) {
-    const collisionCenterX =
-      args.collisionRect.left + args.collisionRect.width / 2;
-    const collisionCenterY =
-      args.collisionRect.top + args.collisionRect.height / 2;
-    const cardTarget = args.droppableContainers
-      .filter((container) => container.id !== columnCollision.id)
-      .map((container) => {
-        const rect = args.droppableRects.get(container.id);
-        return rect ? { container, rect } : null;
-      })
-      .filter(
-        (target): target is NonNullable<typeof target> =>
-          target !== null &&
-          collisionCenterX >= target.rect.left &&
-          collisionCenterX <= target.rect.right
-      )
-      .sort((first, second) => first.rect.top - second.rect.top)
-      .find(
-        ({ rect }) => collisionCenterY < rect.top + rect.height / 2
-      );
-
-    if (cardTarget) {
-      return [{ id: cardTarget.container.id }];
-    }
-
-    return [columnCollision];
+/**
+ * Resolves the drop target from the pointer alone: the card the pointer sits
+ * above, otherwise the hovered column. The dragged card's own rectangle is
+ * ignored because it trails the pointer and would bias the vertical midpoints.
+ */
+const collisionDetection: CollisionDetection = ({
+  droppableContainers,
+  droppableRects,
+  pointerCoordinates,
+}) => {
+  if (!pointerCoordinates) {
+    return [];
   }
 
-  return pointerCollisions.length > 0 ? pointerCollisions : rectIntersection(args);
+  const { x, y } = pointerCoordinates;
+  const column = droppableContainers.find((container) => {
+    const rect = droppableRects.get(container.id);
+    return (
+      container.data.current?.type === "column" &&
+      rect !== undefined &&
+      x >= rect.left &&
+      x <= rect.right &&
+      y >= rect.top &&
+      y <= rect.bottom
+    );
+  });
+
+  if (!column) {
+    return [];
+  }
+
+  const cardBelowPointer = droppableContainers
+    .flatMap((container) => {
+      const rect = droppableRects.get(container.id);
+      return container.data.current?.sortable?.containerId === column.id && rect
+        ? [{ id: container.id, rect }]
+        : [];
+    })
+    .sort((first, second) => first.rect.top - second.rect.top)
+    .find(({ rect }) => y < rect.top + rect.height / 2);
+
+  return [{ id: cardBelowPointer?.id ?? column.id }];
 };
 
 const boardRequest = async (url: string, init?: RequestInit): Promise<BoardData> => {
@@ -83,7 +85,6 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const boardChangeId = useRef(0);
   const boardChangeQueue = useRef(Promise.resolve());
-  const dropPoint = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     let isCurrent = true;
@@ -147,26 +148,7 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
   };
 
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveCardId(event.active.id as string);
-  };
-
-  const handlePointerPosition = (event: React.PointerEvent<HTMLDivElement>) => {
-    dropPoint.current = { x: event.clientX, y: event.clientY };
-  };
-
-  const dropTargetId = (fallbackId: string) => {
-    if (!dropPoint.current) {
-      return fallbackId;
-    }
-
-    const element = document.elementFromPoint(dropPoint.current.x, dropPoint.current.y);
-    const card = element?.closest<HTMLElement>('[data-testid^="card-"]');
-    if (card) {
-      return card.dataset.testid?.replace("card-", "") ?? fallbackId;
-    }
-
-    const column = element?.closest<HTMLElement>('[data-testid^="column-"]');
-    return column?.dataset.testid?.replace("column-", "") ?? fallbackId;
+    setActiveCardId(parseDragId(event.active.id as string).id);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -177,26 +159,19 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
       return;
     }
 
-    const overId = dropTargetId(over.id as string);
-    dropPoint.current = null;
-    if (active.id === overId) {
-      return;
-    }
-
-    const columns = moveCard(board.columns, active.id as string, overId);
-    const destination = columns.find((column) =>
-      column.cardIds.includes(active.id as string)
-    );
+    const cardId = parseDragId(active.id as string).id;
+    const columns = moveCard(board.columns, cardId, parseDragId(over.id as string));
+    const destination = columns.find((column) => column.cardIds.includes(cardId));
     if (!destination) {
       return;
     }
 
-    void applyBoardChange(`/api/board/cards/${active.id}/move`, {
+    void applyBoardChange(`/api/board/cards/${cardId}/move`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         column_id: Number(destination.id),
-        position: destination.cardIds.indexOf(active.id as string),
+        position: destination.cardIds.indexOf(cardId),
       }),
     }, { ...board, columns });
   };
@@ -299,34 +274,32 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
           </div>
         </header>
 
-        <div onPointerMove={handlePointerPosition} onPointerUp={handlePointerPosition}>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collisionDetection}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <section className="grid gap-6 lg:grid-cols-5">
-              {board.columns.map((column) => (
-                <KanbanColumn
-                  key={column.id}
-                  column={column}
-                  cards={column.cardIds.map((cardId) => board.cards[cardId])}
-                  onRename={handleRenameColumn}
-                  onAddCard={handleAddCard}
-                  onDeleteCard={handleDeleteCard}
-                />
-              ))}
-            </section>
-            <DragOverlay>
-              {activeCard ? (
-                <div className="w-[260px]">
-                  <KanbanCardPreview card={activeCard} />
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collisionDetection}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          <section className="grid gap-6 lg:grid-cols-5">
+            {board.columns.map((column) => (
+              <KanbanColumn
+                key={column.id}
+                column={column}
+                cards={column.cardIds.map((cardId) => board.cards[cardId])}
+                onRename={handleRenameColumn}
+                onAddCard={handleAddCard}
+                onDeleteCard={handleDeleteCard}
+              />
+            ))}
+          </section>
+          <DragOverlay>
+            {activeCard ? (
+              <div className="w-[260px]">
+                <KanbanCardPreview card={activeCard} />
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       </main>
     </div>
   );

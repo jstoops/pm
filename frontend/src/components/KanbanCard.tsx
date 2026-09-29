@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
-import type { Card } from "@/lib/kanban";
+import { cardDragId, type Card } from "@/lib/kanban";
 
 type KanbanCardProps = {
   card: Card;
@@ -10,7 +10,7 @@ type KanbanCardProps = {
 
 export const KanbanCard = ({ card, onDelete }: KanbanCardProps) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: card.id });
+    useSortable({ id: cardDragId(card.id) });
 
   const style = {
     transform: CSS.Transform.toString(transform),

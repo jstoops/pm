@@ -47,5 +47,16 @@ npm run build
 
 - Maintain the existing project color variables and visual language unless a feature requires an intentional extension.
 - Keep board domain types in `src/lib/kanban.ts` or a nearby focused module rather than duplicating types in components.
+- Card and column ids come from the same database id namespace, so register drag and drop targets with the prefixed identifiers from `src/lib/kanban.ts` (`cardDragId`, `columnDropId`). Never pass a raw board id to dnd-kit.
 - When persistence is introduced, make the backend the runtime source of truth; do not retain competing local board state as a second persistence mechanism.
 - Use mocked HTTP responses in automated AI tests. Live OpenRouter calls belong only in an explicit manual smoke-test command.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

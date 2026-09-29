@@ -15,91 +15,57 @@ export type BoardData = {
   cards: Record<string, Card>;
 };
 
-const isColumnId = (columns: Column[], id: string) =>
-  columns.some((column) => column.id === id);
+// Card and column database ids share one numeric namespace, so drag and drop
+// identifiers are prefixed to keep the two kinds of target apart.
+export type DropTarget = { type: "card" | "column"; id: string };
 
-const findColumnId = (columns: Column[], id: string) => {
-  if (isColumnId(columns, id)) {
-    return id;
-  }
-  return columns.find((column) => column.cardIds.includes(id))?.id;
+export const cardDragId = (cardId: string) => `card:${cardId}`;
+
+export const columnDropId = (columnId: string) => `column:${columnId}`;
+
+export const parseDragId = (dragId: string): DropTarget => {
+  const separator = dragId.indexOf(":");
+  return {
+    type: dragId.slice(0, separator) as DropTarget["type"],
+    id: dragId.slice(separator + 1),
+  };
 };
 
+/**
+ * Moves a card in front of the target card, or to the end of the target column.
+ */
 export const moveCard = (
   columns: Column[],
-  activeId: string,
-  overId: string
+  cardId: string,
+  target: DropTarget
 ): Column[] => {
-  const activeColumnId = findColumnId(columns, activeId);
-  const overColumnId = findColumnId(columns, overId);
+  const source = columns.find((column) => column.cardIds.includes(cardId));
+  const destination =
+    target.type === "column"
+      ? columns.find((column) => column.id === target.id)
+      : columns.find((column) => column.cardIds.includes(target.id));
 
-  if (!activeColumnId || !overColumnId) {
+  if (!source || !destination) {
     return columns;
   }
 
-  const activeColumn = columns.find((column) => column.id === activeColumnId);
-  const overColumn = columns.find((column) => column.id === overColumnId);
-
-  if (!activeColumn || !overColumn) {
-    return columns;
-  }
-
-  const isOverColumn = isColumnId(columns, overId);
-
-  if (activeColumnId === overColumnId) {
-    if (isOverColumn) {
-      const nextCardIds = activeColumn.cardIds.filter(
-        (cardId) => cardId !== activeId
-      );
-      nextCardIds.push(activeId);
-      return columns.map((column) =>
-        column.id === activeColumnId
-          ? { ...column, cardIds: nextCardIds }
-          : column
-      );
-    }
-
-    const oldIndex = activeColumn.cardIds.indexOf(activeId);
-    const newIndex = activeColumn.cardIds.indexOf(overId);
-
-    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
-      return columns;
-    }
-
-    const nextCardIds = [...activeColumn.cardIds];
-    nextCardIds.splice(oldIndex, 1);
-    nextCardIds.splice(newIndex, 0, activeId);
-
-    return columns.map((column) =>
-      column.id === activeColumnId
-        ? { ...column, cardIds: nextCardIds }
-        : column
-    );
-  }
-
-  const activeIndex = activeColumn.cardIds.indexOf(activeId);
-  if (activeIndex === -1) {
-    return columns;
-  }
-
-  const nextActiveCardIds = [...activeColumn.cardIds];
-  nextActiveCardIds.splice(activeIndex, 1);
-
-  const nextOverCardIds = [...overColumn.cardIds];
-  if (isOverColumn) {
-    nextOverCardIds.push(activeId);
-  } else {
-    const overIndex = overColumn.cardIds.indexOf(overId);
-    const insertIndex = overIndex === -1 ? nextOverCardIds.length : overIndex;
-    nextOverCardIds.splice(insertIndex, 0, activeId);
-  }
+  const remaining = source.cardIds.filter((id) => id !== cardId);
+  const isSameColumn = source.id === destination.id;
+  const nextCardIds = isSameColumn ? [...remaining] : [...destination.cardIds];
+  const beforeIndex =
+    target.type === "card" ? nextCardIds.indexOf(target.id) : -1;
+  nextCardIds.splice(
+    beforeIndex === -1 ? nextCardIds.length : beforeIndex,
+    0,
+    cardId
+  );
 
   return columns.map((column) => {
-    if (column.id === activeColumnId) {
-      return { ...column, cardIds: nextActiveCardIds };
+    if (column.id === destination.id) {
+      return { ...column, cardIds: nextCardIds };
     }
-    if (column.id === overColumnId) {
-      return { ...column, cardIds: nextOverCardIds };
+    if (column.id === source.id) {
+      return { ...column, cardIds: remaining };
     }
     return column;
   });

@@ -134,17 +134,18 @@
 
 ## Part 7: Frontend Persistence Integration
 
-- [ ] Load the board from the authenticated backend API rather than `initialData` at runtime.
-- [ ] Replace local-only mutations with API-backed column and card operations.
-- [ ] Handle loading, save failures, and retryable user feedback without losing a valid board state.
-- [ ] Keep drag/drop responsive while preserving the server's resulting order.
-- [ ] Retain the static demo data only as server-side initial-board seed data, if required.
+- [x] Load the board from the authenticated backend API rather than `initialData` at runtime.
+- [x] Replace local-only mutations with API-backed column and card operations.
+- [x] Handle loading, save failures, and retryable user feedback without losing a valid board state.
+- [x] Keep drag/drop responsive while preserving the server's resulting order.
+- [x] Retain the static demo data only as server-side initial-board seed data, if required.
 
 ### Tests
 
-- Frontend unit tests mock board API responses for loading, successful mutation, and failure states.
-- Backend integration tests cover the API contract consumed by the UI.
-- Playwright tests verify an edit survives reload and a moved card remains in its new column.
+- [x] Frontend unit tests mock board API responses for loading, successful mutation, and failure states.
+- [x] Backend integration tests cover the API contract consumed by the UI.
+- [x] Playwright tests verify an edit survives reload and a moved card remains in its new column.
+- [x] Playwright tests verify a card dropped at the top of, or between the top cards of, a column keeps that position.
 
 ### Success Criteria
 
