@@ -156,15 +156,17 @@
 
 ## Part 8: OpenRouter Connectivity
 
-- [ ] Add backend-only OpenRouter configuration using `OPENROUTER_API_KEY` and model `qwen/qwen3.8-27b:free`.
-- [ ] Implement an OpenRouter client with timeouts and actionable error handling.
-- [ ] Add an opt-in manual smoke-test command that sends `2+2` to OpenRouter and reports the response without printing credentials.
-- [ ] Keep the smoke-test command separate from the normal automated test suite.
+- [x] Decision: validate connectivity with an explicit, live OpenRouter request rather than mocked HTTP tests. The smoke test must run in Docker and send `2+2` to the configured model.
+- [x] Add backend-only OpenRouter configuration using `OPENROUTER_API_KEY` and model `openai/gpt-oss-120b`.
+- [x] Implement an OpenRouter client with timeouts and actionable error handling.
+- [x] Add an opt-in manual smoke-test command that sends `2+2` to OpenRouter and reports the response without printing credentials.
+- [x] Keep the smoke-test command separate from the normal automated test suite.
 
 ### Tests
 
-- Unit tests mock HTTP requests and verify model selection, request construction, success parsing, and error handling.
-- Manual smoke test: with a valid root `.env`, the explicit command returns a response to `2+2`.
+- [x] The explicit smoke-test command makes a live request; it does not mock OpenRouter HTTP responses.
+- Windows: run `./scripts/smoke-openrouter.ps1`. macOS/Linux: run `./scripts/smoke-openrouter.sh`.
+- [x] Manual smoke test: with a valid root `.env`, the explicit command returned `4` from `openai/gpt-oss-120b` on 2026-09-29.
 
 ### Success Criteria
 
