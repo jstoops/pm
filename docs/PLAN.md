@@ -88,7 +88,7 @@
 - Visiting `/` while unauthenticated presents login.
 - `user` / `password` grants access to the board.
 - Logout removes board access until the user logs in again.
-- Board changes remain available after a reload and re-login until the browser session ends.
+- Board changes remain available after a reload and re-login through SQLite persistence.
 
 ## Part 5: Database Design Approval
 
@@ -138,6 +138,7 @@
 - [x] Replace local-only mutations with API-backed column and card operations.
 - [x] Handle loading, save failures, and retryable user feedback without losing a valid board state.
 - [x] Keep drag/drop responsive while preserving the server's resulting order.
+- [x] Resolve card drop targets from the pointer position, selecting the card below the pointer or the hovered column when no card is below it.
 - [x] Retain the static demo data only as server-side initial-board seed data, if required.
 
 ### Tests
@@ -145,12 +146,13 @@
 - [x] Frontend unit tests mock board API responses for loading, successful mutation, and failure states.
 - [x] Backend integration tests cover the API contract consumed by the UI.
 - [x] Playwright tests verify an edit survives reload and a moved card remains in its new column.
-- [x] Playwright tests verify a card dropped at the top of, or between the top cards of, a column keeps that position.
+- [x] Playwright regression tests verify cross-column and same-column drops above, and between, the top two cards of a column persist in the intended position.
 
 ### Success Criteria
 
 - All board edits made through the UI persist across a browser reload.
 - The UI displays a clear, recoverable state when an API operation fails.
+- Dragging a card above or between the top two cards of a column preserves the intended order after reload.
 
 ## Part 8: OpenRouter Connectivity
 
