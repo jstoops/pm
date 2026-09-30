@@ -156,4 +156,27 @@ describe("KanbanBoard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/board is unchanged/i);
     expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
   });
+
+  it("updates the visible board after an AI response includes a board update", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const updatedBoard: BoardData = {
+      ...board,
+      columns: board.columns.map((column) =>
+        column.id === "1" ? { ...column, title: "AI Backlog" } : column
+      ),
+    };
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ assistantText: "Renamed the column.", board: updatedBoard }),
+        { status: 200 }
+      )
+    );
+
+    await user.type(screen.getByLabelText("Message the board assistant"), "Rename Backlog");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(await screen.findByText("Renamed the column.")).toBeVisible();
+    expect(within(getFirstColumn()).getByLabelText("Column title")).toHaveValue("AI Backlog");
+  });
 });

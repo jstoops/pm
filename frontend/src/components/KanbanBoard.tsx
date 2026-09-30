@@ -11,6 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { ChatSidebar } from "@/components/ChatSidebar";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
 import { moveCard, parseDragId, type BoardData } from "@/lib/kanban";
@@ -280,17 +281,27 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <section className="grid gap-6 lg:grid-cols-5">
-            {board.columns.map((column) => (
-              <KanbanColumn
-                key={column.id}
-                column={column}
-                cards={column.cardIds.map((cardId) => board.cards[cardId])}
-                onRename={handleRenameColumn}
-                onAddCard={handleAddCard}
-                onDeleteCard={handleDeleteCard}
-              />
-            ))}
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
+            <div className="min-w-0 overflow-x-auto pb-2">
+              <div className="grid min-w-[1120px] grid-cols-5 gap-6">
+                {board.columns.map((column) => (
+                  <KanbanColumn
+                    key={column.id}
+                    column={column}
+                    cards={column.cardIds.map((cardId) => board.cards[cardId])}
+                    onRename={handleRenameColumn}
+                    onAddCard={handleAddCard}
+                    onDeleteCard={handleDeleteCard}
+                  />
+                ))}
+              </div>
+            </div>
+            <ChatSidebar
+              onBoardUpdate={(nextBoard) => {
+                setError("");
+                setBoard(nextBoard);
+              }}
+            />
           </section>
           <DragOverlay>
             {activeCard ? (

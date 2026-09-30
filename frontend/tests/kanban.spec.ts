@@ -146,6 +146,44 @@ test.describe("authenticated board", () => {
     await expect(targetColumn.getByText(title)).toBeVisible();
   });
 
+  test("shows an AI board update without a manual reload", async ({ page }) => {
+    const board = (await (await page.request.get("/api/board")).json()) as Board & {
+      columns: { id: string; title: string; cardIds: string[] }[];
+    };
+    const updatedBoard = {
+      ...board,
+      columns: board.columns.map((column, index) =>
+        index === 0 ? { ...column, title: "AI Backlog" } : column
+      ),
+    };
+    await page.route("**/api/chat", async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          assistantText: "Renamed the backlog.",
+          board: updatedBoard,
+        }),
+      });
+    });
+
+    await page.getByLabel("Message the board assistant").fill("Rename Backlog");
+    await page.getByRole("button", { name: "Send message" }).click();
+
+    await expect(page.getByText("Renamed the backlog.")).toBeVisible();
+    await expect(page.locator('[data-testid^="column-"]').first().getByLabel("Column title"))
+      .toHaveValue("AI Backlog");
+  });
+
+  test("keeps board and assistant access on mobile", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await expect(page.locator('[data-testid^="column-"]').first()).toBeVisible();
+    const assistant = page.getByTestId("ai-chat-sidebar");
+    await assistant.scrollIntoViewIfNeeded();
+    await expect(assistant).toBeVisible();
+    await expect(assistant.getByLabel("Message the board assistant")).toBeVisible();
+  });
+
   test.describe("drops near the top of a column", () => {
     test.beforeEach(async ({ page }) => {
       await page.setViewportSize({ width: 1624, height: 1069 });

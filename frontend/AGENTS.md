@@ -10,6 +10,7 @@ This directory contains the static-exported Kanban frontend. It uses Next.js 16,
 - `src/components/KanbanCard.tsx` renders sortable cards and deletion controls.
 - `src/components/KanbanCardPreview.tsx` is used for the drag overlay.
 - `src/components/NewCardForm.tsx` collects a title and optional details for a new card.
+- `src/components/ChatSidebar.tsx` renders the AI conversation, sends authenticated requests to `/api/chat`, and returns AI board updates to `KanbanBoard`.
 - `src/lib/kanban.ts` defines `Card`, `Column`, `BoardData`, and drag/drop move logic.
 - `next.config.ts` enables Next.js static export. The root Dockerfile builds `out/` and copies it into FastAPI's static directory.
 - `src/app/login/page.tsx` and `src/components/LoginForm.tsx` provide the login experience; the form posts credentials to `/api/auth/login` and relies on the HTTP-only session cookie set by the backend.
@@ -21,6 +22,7 @@ This directory contains the static-exported Kanban frontend. It uses Next.js 16,
 - Cards can be created, deleted, reordered within a column, and moved between columns.
 - The backend is the board's runtime source of truth. Board changes persist in SQLite across reload, logout, and re-login; the browser does not store a competing board copy.
 - The board is accessible only after the backend accepts `user` / `password`; logout posts to `/api/auth/logout` and returns to the login page.
+- The board assistant keeps its own bounded conversation in memory. A successful AI board update replaces the current board view with the backend response; it is never stored separately in the browser.
 
 ## Commands
 

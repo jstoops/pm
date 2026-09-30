@@ -194,17 +194,17 @@
 
 ## Part 10: AI Chat Sidebar
 
-- [ ] Design and implement a responsive sidebar integrated with the authenticated board workspace.
-- [ ] Display conversation history, message submission, pending state, errors, and assistant responses.
-- [ ] Send chat requests to the authenticated backend endpoint.
-- [ ] Refresh board state from the API after a successful AI-driven update.
-- [ ] Ensure the desktop sidebar and mobile presentation preserve access to both chat and board controls.
+- [x] Design and implement a responsive sidebar integrated with the authenticated board workspace.
+- [x] Display conversation history, message submission, pending state, errors, and assistant responses.
+- [x] Send chat requests to the authenticated backend endpoint.
+- [x] Refresh board state from the API after a successful AI-driven update.
+- [x] Ensure the desktop sidebar and mobile presentation preserve access to both chat and board controls.
 
 ### Tests
 
-- Component tests for message submission, loading, error, and assistant-response states.
-- Mocked integration tests for chat responses with and without board updates.
-- Playwright tests verify that an AI update is reflected in the board without a manual reload.
+- [x] Component tests for message submission, loading, error, and assistant-response states.
+- [x] Mocked integration tests for chat responses with and without board updates.
+- [x] Playwright tests verify that an AI update is reflected in the board without a manual reload.
 
 ### Success Criteria
 
