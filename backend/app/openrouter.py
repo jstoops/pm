@@ -11,7 +11,7 @@ class OpenRouterError(RuntimeError):
     pass
 
 
-def ask_openrouter(message: str) -> str:
+def ask_openrouter(messages: list[dict[str, str]]) -> str:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is not configured.")
@@ -22,7 +22,7 @@ def ask_openrouter(message: str) -> str:
             headers={"Authorization": f"Bearer {api_key}"},
             json={
                 "model": OPENROUTER_MODEL,
-                "messages": [{"role": "user", "content": message}],
+                "messages": messages,
             },
             timeout=REQUEST_TIMEOUT_SECONDS,
         )

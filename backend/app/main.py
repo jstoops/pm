@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
+from app.ai import AIOutputError, ChatRequest, request_ai_update
 from app.database import (
     authenticate_mvp_user,
     board_data,
@@ -120,6 +121,20 @@ def logout(request: Request) -> Response:
 @app.get("/api/board")
 def get_board(request: Request) -> dict[str, object]:
     return board_data(require_authenticated(request))
+
+
+@app.post("/api/chat")
+def chat_with_board_ai(payload: ChatRequest, request: Request) -> dict[str, object]:
+    try:
+        output, updated_board = request_ai_update(require_authenticated(request), payload)
+    except AIOutputError as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
+        ) from error
+    response: dict[str, object] = {"assistantText": output.assistant_text}
+    if updated_board is not None:
+        response["board"] = updated_board
+    return response
 
 
 @app.patch("/api/board/columns/{column_id}")

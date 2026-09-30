@@ -11,7 +11,9 @@ The backend is a minimal FastAPI service packaged by the root Docker image. It i
 - `POST /api/auth/login` accepts only `user` / `password` and establishes a signed, HTTP-only session cookie.
 - `GET /api/auth/session` reports whether the request is authenticated; `POST /api/auth/logout` clears the session.
 - `GET /api/board` returns the authenticated user's persisted board. The column/card routes under `/api/board` rename, create, update, delete, and move board data.
+- `POST /api/chat` sends the authenticated user's bounded conversation and current board to OpenRouter, validates the versioned response, and atomically applies valid board operations.
 - `app/database.py` owns SQLite initialization, Argon2id verification, seed data, and board mutations.
+- `app/ai.py` owns the AI response schema, OpenRouter prompt construction, and validated board-command orchestration.
 - `tests/` contains backend API and static-root tests using HTTPX ASGI transport, including temporary SQLite databases for persistence coverage.
 
 ## Commands

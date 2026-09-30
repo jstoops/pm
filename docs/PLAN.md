@@ -175,17 +175,17 @@
 
 ## Part 9: AI Board Commands and Structured Output
 
-- [ ] Define a versioned structured response schema containing assistant text and an optional complete or patch-style board update.
-- [ ] Include the current board JSON, authenticated user's question, and bounded conversation history in each model request.
-- [ ] Validate model output against the schema before persisting any board change.
-- [ ] Apply valid AI-requested changes through the same service layer used by board APIs.
-- [ ] Reject invalid, unauthorized, or malformed AI changes without altering the board.
+- [x] Define a versioned structured response schema containing assistant text and an optional patch-style board update.
+- [x] Include the current board JSON, authenticated user's question, and bounded conversation history in each model request.
+- [x] Validate model output against the schema before persisting any board change.
+- [x] Apply valid AI-requested changes through the same service layer used by board APIs.
+- [x] Reject invalid, unauthorized, or malformed AI changes without altering the board.
 
 ### Tests
 
-- Mocked OpenRouter tests for conversational replies without updates, valid card/column updates, multiple updates, and malformed output.
-- Database/API tests confirm valid AI updates persist atomically and invalid updates make no changes.
-- Test the request payload includes current board state and bounded history.
+- [x] Mocked OpenRouter tests for conversational replies without updates, valid card/column updates, multiple updates, and malformed output.
+- [x] Database/API tests confirm valid AI updates persist atomically and invalid updates make no changes.
+- [x] Test the request payload includes current board state and bounded history.
 
 ### Success Criteria
 
