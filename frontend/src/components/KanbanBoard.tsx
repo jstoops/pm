@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  closestCorners,
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -11,9 +13,11 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
+import { redirectIfUnauthorized } from "@/lib/api";
 import { moveCard, parseDragId, type BoardData } from "@/lib/kanban";
 
 type KanbanBoardProps = {
@@ -24,14 +28,12 @@ type KanbanBoardProps = {
  * Resolves the drop target from the pointer alone: the card the pointer sits
  * above, otherwise the hovered column. The dragged card's own rectangle is
  * ignored because it trails the pointer and would bias the vertical midpoints.
+ * Keyboard drags have no pointer and use the closest droppable instead.
  */
-const collisionDetection: CollisionDetection = ({
-  droppableContainers,
-  droppableRects,
-  pointerCoordinates,
-}) => {
+const collisionDetection: CollisionDetection = (args) => {
+  const { droppableContainers, droppableRects, pointerCoordinates } = args;
   if (!pointerCoordinates) {
-    return [];
+    return closestCorners(args);
   }
 
   const { x, y } = pointerCoordinates;
@@ -66,6 +68,7 @@ const collisionDetection: CollisionDetection = ({
 
 const boardRequest = async (url: string, init?: RequestInit): Promise<BoardData> => {
   const response = await fetch(url, init);
+  redirectIfUnauthorized(response);
   if (!response.ok) {
     throw new Error("Unable to save board changes.");
   }
@@ -110,10 +113,11 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
     })
   );
-
-  const cardsById = useMemo(() => board?.cards ?? {}, [board]);
 
   const applyBoardChange = async (
     url: string,
@@ -161,7 +165,16 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
     }
 
     const cardId = parseDragId(active.id as string).id;
-    const columns = moveCard(board.columns, cardId, parseDragId(over.id as string));
+    const target = parseDragId(over.id as string);
+    // Keyboard drags take the target card's slot, so moving down a column
+    // lands behind the target. Pointer drags always land in front of it.
+    const sourceCardIds =
+      board.columns.find((column) => column.cardIds.includes(cardId))?.cardIds ?? [];
+    const afterTarget =
+      event.activatorEvent instanceof KeyboardEvent &&
+      target.type === "card" &&
+      sourceCardIds.indexOf(target.id) > sourceCardIds.indexOf(cardId);
+    const columns = moveCard(board.columns, cardId, target, afterTarget);
     const destination = columns.find((column) => column.cardIds.includes(cardId));
     if (!destination) {
       return;
@@ -193,11 +206,19 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
     });
   };
 
-  const handleDeleteCard = (_columnId: string, cardId: string) => {
+  const handleUpdateCard = (cardId: string, title: string, details: string) => {
+    void applyBoardChange(`/api/board/cards/${cardId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, details }),
+    });
+  };
+
+  const handleDeleteCard = (cardId: string) => {
     void applyBoardChange(`/api/board/cards/${cardId}`, { method: "DELETE" });
   };
 
-  const activeCard = activeCardId ? cardsById[activeCardId] : null;
+  const activeCard = activeCardId ? board?.cards[activeCardId] : null;
 
   if (!board) {
     return (
@@ -292,6 +313,7 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
                     onRename={handleRenameColumn}
                     onAddCard={handleAddCard}
                     onDeleteCard={handleDeleteCard}
+                    onUpdateCard={handleUpdateCard}
                   />
                 ))}
               </div>

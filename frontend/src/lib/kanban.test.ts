@@ -19,6 +19,11 @@ describe("moveCard", () => {
     expect(result[0].cardIds).toEqual(["card-2", "card-1"]);
   });
 
+  it("places a card behind the target card when requested", () => {
+    const result = moveCard(baseColumns, "card-1", { type: "card", id: "card-2" }, true);
+    expect(result[0].cardIds).toEqual(["card-2", "card-1"]);
+  });
+
   it("moves cards to another column", () => {
     const result = moveCard(baseColumns, "card-2", { type: "card", id: "card-3" });
     expect(result[0].cardIds).toEqual(["card-1"]);

@@ -215,3 +215,4 @@
 ## Post-Part 10 Changes
 
 - [x] Replace the card "remove" text control with a trash icon.
+- [x] Remediate every finding in `docs/code_review.md` (card editing, isolated e2e stack, title validation, single board-change service, expired-session redirect, structured AI output, locked dependencies, keyboard drag and drop, and cleanup).

@@ -11,19 +11,21 @@ class OpenRouterError(RuntimeError):
     pass
 
 
-def ask_openrouter(messages: list[dict[str, str]]) -> str:
+def ask_openrouter(
+    messages: list[dict[str, str]], response_format: dict[str, object] | None = None
+) -> str:
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is not configured.")
 
+    payload: dict[str, object] = {"model": OPENROUTER_MODEL, "messages": messages}
+    if response_format is not None:
+        payload["response_format"] = response_format
     try:
         response = httpx.post(
             OPENROUTER_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "model": OPENROUTER_MODEL,
-                "messages": messages,
-            },
+            json=payload,
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()

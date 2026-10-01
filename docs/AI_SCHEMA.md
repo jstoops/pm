@@ -6,7 +6,7 @@
 
 ## Model Output
 
-The model must return JSON only, using this versioned shape:
+The request sets OpenRouter's `response_format` to a JSON schema generated from the `AIOutput` model, and the system prompt repeats the shape. The model must return JSON only, using this versioned shape:
 
 ```json
 {
@@ -23,7 +23,7 @@ The model must return JSON only, using this versioned shape:
 }
 ```
 
-`operations` is optional and supports at most 20 entries. Each operation uses numeric IDs from the current board:
+`operations` is optional and supports at most 20 entries. Each operation uses numeric IDs from the current board. Titles are trimmed and must not be blank. `position` is the zero-based index the card takes in the target column. The operation models live in `backend/app/operations.py` and are the same ones the REST board routes use:
 
 - `rename_column`: `columnId`, `title`
 - `create_card`: `columnId`, `title`, optional `details`

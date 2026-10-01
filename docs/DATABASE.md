@@ -14,7 +14,7 @@ The schema is defined in [DATABASE_SCHEMA.json](DATABASE_SCHEMA.json). Every tab
 - `cards` belongs to a column and stores its order within that column.
 - Foreign keys cascade from user to board to column to card.
 
-The service layer keeps each `position` sequence contiguous and performs a move or reorder in one SQLite transaction. Unique ordering constraints prevent duplicate positions.
+The service layer keeps each `position` sequence contiguous and performs each change in one SQLite transaction that takes the write lock up front (`BEGIN IMMEDIATE`), so concurrent requests cannot compute the same position. Unique ordering constraints prevent duplicate positions.
 
 ## Password Security
 
@@ -40,4 +40,4 @@ The API returns the existing frontend `BoardData` shape: ordered `columns`, each
 
 ## Out of Scope
 
-The backend uses idempotent schema creation on access rather than a migration framework. Future schema changes must add explicit migrations before modifying the live schema.
+The backend uses idempotent schema creation at application startup rather than a migration framework. Future schema changes must add explicit migrations before modifying the live schema.

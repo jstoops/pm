@@ -8,13 +8,6 @@ from app import database
 from app.main import app
 
 
-@pytest.fixture
-def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "project_management.db"
-    monkeypatch.setattr(database, "DATABASE_PATH", path)
-    return path
-
-
 async def login(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/api/auth/login", json={"username": "user", "password": "password"}
@@ -64,7 +57,7 @@ async def test_first_board_is_seeded_and_password_is_hashed(
 
 
 @pytest.mark.anyio
-async def test_board_mutations_persist_for_a_new_client(database_path: Path) -> None:
+async def test_board_mutations_persist_for_a_new_client() -> None:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         await login(client)
@@ -88,7 +81,8 @@ async def test_board_mutations_persist_for_a_new_client(database_path: Path) -> 
             if card["title"] == "Persisted card"
         )
         updated = await client.patch(
-            f"/api/board/cards/{card_id}", json={"title": "Updated card"}
+            f"/api/board/cards/{card_id}",
+            json={"title": "Updated card", "details": "Edited details."},
         )
         moved = await client.post(
             f"/api/board/cards/{card_id}/move",
@@ -97,7 +91,11 @@ async def test_board_mutations_persist_for_a_new_client(database_path: Path) -> 
         deleted = await client.delete(f"/api/board/cards/{card_id}")
 
     assert renamed.json()["columns"][0]["title"] == "Ideas"
-    assert updated.json()["cards"][card_id]["title"] == "Updated card"
+    assert updated.json()["cards"][card_id] == {
+        "id": card_id,
+        "title": "Updated card",
+        "details": "Edited details.",
+    }
     assert moved.json()["columns"][1]["cardIds"][0] == card_id
     assert card_id not in deleted.json()["cards"]
 
@@ -146,3 +144,24 @@ async def test_board_rejects_invalid_or_foreign_resources(database_path: Path) -
     assert invalid_update.status_code == 404
     assert empty_update.status_code == 422
     assert foreign_update.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_board_rejects_blank_titles_without_changes() -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await login(client)
+        board = (await client.get("/api/board")).json()
+        column_id = board["columns"][0]["id"]
+        card_id = board["columns"][0]["cardIds"][0]
+        responses = [
+            await client.patch(f"/api/board/columns/{column_id}", json={"title": "   "}),
+            await client.post(
+                "/api/board/cards", json={"column_id": int(column_id), "title": "  "}
+            ),
+            await client.patch(f"/api/board/cards/{card_id}", json={"title": " "}),
+        ]
+        persisted_board = (await client.get("/api/board")).json()
+
+    assert [response.status_code for response in responses] == [422, 422, 422]
+    assert persisted_board == board

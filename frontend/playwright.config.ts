@@ -1,25 +1,19 @@
 import { defineConfig, devices } from "@playwright/test";
-
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000";
+import { E2E_BASE_URL } from "./tests/global-setup";
 
 export default defineConfig({
   testDir: "./tests",
+  globalSetup: "./tests/global-setup.ts",
+  // Every test signs in as the same user and shares one board.
+  workers: 1,
   timeout: 60_000,
   expect: {
     timeout: 10_000,
   },
   use: {
-    baseURL,
+    baseURL: E2E_BASE_URL,
     trace: "retain-on-failure",
   },
-  webServer: process.env.PLAYWRIGHT_BASE_URL
-    ? undefined
-    : {
-      command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
-      url: "http://127.0.0.1:3000",
-      reuseExistingServer: true,
-      timeout: 120_000,
-    },
   projects: [
     {
       name: "chromium",

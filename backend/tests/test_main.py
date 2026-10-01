@@ -73,15 +73,12 @@ async def test_health_returns_ok() -> None:
 
 
 @pytest.mark.anyio
-async def test_example_returns_message() -> None:
+async def test_favicon_is_served() -> None:
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        response = await client.get("/api/example")
+        response = await client.get("/favicon.ico")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "message": "Project Management MVP API is running."
-    }

@@ -1,8 +1,11 @@
 import os
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -10,20 +13,37 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.ai import AIOutputError, ChatRequest, request_ai_update
 from app.database import (
+    BoardItemNotFoundError,
+    apply_operations,
     authenticate_mvp_user,
     board_data,
-    create_card,
-    delete_card,
-    move_card,
-    rename_column,
-    update_card,
+    initialize_database,
+)
+from app.operations import (
+    BoardOperation,
+    CardChanges,
+    CardDetails,
+    CardTitle,
+    ColumnTitle,
+    CreateCard,
+    DeleteCard,
+    MoveCard,
+    RenameColumn,
+    UpdateCard,
 )
 
 STATIC_DIRECTORY = Path(__file__).parent / "static"
 SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_urlsafe(32))
 SESSION_HTTPS_ONLY = os.environ.get("SESSION_HTTPS_ONLY", "false").lower() == "true"
 
-app = FastAPI(title="Project Management MVP API")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    initialize_database()
+    yield
+
+
+app = FastAPI(title="Project Management MVP API", lifespan=lifespan)
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
@@ -39,18 +59,13 @@ class LoginRequest(BaseModel):
 
 
 class ColumnRenameRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
+    title: ColumnTitle
 
 
 class CardCreateRequest(BaseModel):
     column_id: int
-    title: str = Field(min_length=1, max_length=240)
-    details: str = Field(default="", max_length=4000)
-
-
-class CardUpdateRequest(BaseModel):
-    title: str | None = Field(default=None, min_length=1, max_length=240)
-    details: str | None = Field(default=None, max_length=4000)
+    title: CardTitle
+    details: CardDetails = ""
 
 
 class CardMoveRequest(BaseModel):
@@ -71,6 +86,16 @@ def require_authenticated(request: Request) -> int:
     return request.session["user_id"]
 
 
+UserId = Annotated[int, Depends(require_authenticated)]
+
+
+def change_board(user_id: int, operation: BoardOperation) -> dict[str, object]:
+    try:
+        return apply_operations(user_id, [operation])
+    except BoardItemNotFoundError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+
+
 @app.get("/", include_in_schema=False)
 def home(request: Request) -> FileResponse:
     page = "index.html" if is_authenticated(request) else "login/index.html"
@@ -84,14 +109,14 @@ def login_page(request: Request) -> Response:
     return FileResponse(STATIC_DIRECTORY / "login/index.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(STATIC_DIRECTORY / "favicon.ico")
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
-
-
-@app.get("/api/example")
-def example() -> dict[str, str]:
-    return {"message": "Project Management MVP API is running."}
 
 
 @app.get("/api/auth/session")
@@ -119,14 +144,14 @@ def logout(request: Request) -> Response:
 
 
 @app.get("/api/board")
-def get_board(request: Request) -> dict[str, object]:
-    return board_data(require_authenticated(request))
+def get_board(user_id: UserId) -> dict[str, object]:
+    return board_data(user_id)
 
 
 @app.post("/api/chat")
-def chat_with_board_ai(payload: ChatRequest, request: Request) -> dict[str, object]:
+def chat_with_board_ai(payload: ChatRequest, user_id: UserId) -> dict[str, object]:
     try:
-        output, updated_board = request_ai_update(require_authenticated(request), payload)
+        output, updated_board = request_ai_update(user_id, payload)
     except AIOutputError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
@@ -139,55 +164,37 @@ def chat_with_board_ai(payload: ChatRequest, request: Request) -> dict[str, obje
 
 @app.patch("/api/board/columns/{column_id}")
 def rename_board_column(
-    column_id: int, payload: ColumnRenameRequest, request: Request
+    column_id: int, payload: ColumnRenameRequest, user_id: UserId
 ) -> dict[str, object]:
-    if not rename_column(require_authenticated(request), column_id, payload.title.strip()):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Column not found.")
-    return board_data(require_authenticated(request))
+    return change_board(user_id, RenameColumn(columnId=column_id, title=payload.title))
 
 
 @app.post("/api/board/cards", status_code=status.HTTP_201_CREATED)
-def create_board_card(payload: CardCreateRequest, request: Request) -> dict[str, object]:
-    if create_card(
-        require_authenticated(request),
-        payload.column_id,
-        payload.title.strip(),
-        payload.details,
-    ) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Column not found.")
-    return board_data(require_authenticated(request))
+def create_board_card(payload: CardCreateRequest, user_id: UserId) -> dict[str, object]:
+    return change_board(
+        user_id,
+        CreateCard(columnId=payload.column_id, title=payload.title, details=payload.details),
+    )
 
 
 @app.patch("/api/board/cards/{card_id}")
-def update_board_card(
-    card_id: int, payload: CardUpdateRequest, request: Request
-) -> dict[str, object]:
-    if payload.title is None and payload.details is None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="No changes provided.")
-    title = payload.title.strip() if payload.title is not None else None
-    if title == "":
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Title is required.")
-    if not update_card(require_authenticated(request), card_id, title, payload.details):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.")
-    return board_data(require_authenticated(request))
+def update_board_card(card_id: int, payload: CardChanges, user_id: UserId) -> dict[str, object]:
+    return change_board(
+        user_id, UpdateCard(cardId=card_id, title=payload.title, details=payload.details)
+    )
 
 
 @app.delete("/api/board/cards/{card_id}")
-def delete_board_card(card_id: int, request: Request) -> dict[str, object]:
-    if not delete_card(require_authenticated(request), card_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card not found.")
-    return board_data(require_authenticated(request))
+def delete_board_card(card_id: int, user_id: UserId) -> dict[str, object]:
+    return change_board(user_id, DeleteCard(cardId=card_id))
 
 
 @app.post("/api/board/cards/{card_id}/move")
-def move_board_card(
-    card_id: int, payload: CardMoveRequest, request: Request
-) -> dict[str, object]:
-    if not move_card(
-        require_authenticated(request), card_id, payload.column_id, payload.position
-    ):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Card or column not found.")
-    return board_data(require_authenticated(request))
+def move_board_card(card_id: int, payload: CardMoveRequest, user_id: UserId) -> dict[str, object]:
+    return change_board(
+        user_id,
+        MoveCard(cardId=card_id, columnId=payload.column_id, position=payload.position),
+    )
 
 
 app.mount(

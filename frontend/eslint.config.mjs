@@ -5,6 +5,13 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    rules: {
+      // FastAPI picks the login or board page from the session cookie, so
+      // sign-in, sign-out and expired sessions need a full page load.
+      "@next/next/no-location-assign-relative-destination": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

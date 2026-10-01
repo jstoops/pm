@@ -1,10 +1,20 @@
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
+from app.operations import (
+    BoardOperation,
+    CreateCard,
+    DeleteCard,
+    MoveCard,
+    RenameColumn,
+    UpdateCard,
+)
 
 DATABASE_PATH = Path(
     os.environ.get("DATABASE_PATH", "/app/data/project_management.db")
@@ -24,16 +34,29 @@ INITIAL_CARDS = [
 ]
 
 
-def connect() -> sqlite3.Connection:
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DATABASE_PATH)
+class BoardItemNotFoundError(LookupError):
+    pass
+
+
+@contextmanager
+def transaction() -> Iterator[sqlite3.Connection]:
+    """Yields a connection inside a write-locked transaction that commits on success."""
+    connection = sqlite3.connect(DATABASE_PATH, autocommit=True)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        yield connection
+        connection.execute("COMMIT")
+    finally:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        connection.close()
 
 
 def initialize_database() -> None:
-    with connect() as connection:
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with closing(sqlite3.connect(DATABASE_PATH, autocommit=True)) as connection:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -74,19 +97,17 @@ def initialize_database() -> None:
 
 
 def authenticate_mvp_user(username: str, password: str) -> int | None:
-    initialize_database()
-    with connect() as connection:
+    with transaction() as connection:
         user = connection.execute(
             "SELECT id, password_hash FROM users WHERE username = ?", (username,)
         ).fetchone()
         if user is None:
             if username != "user" or password != "password":
                 return None
-            cursor = connection.execute(
+            return connection.execute(
                 "INSERT INTO users (username, password_hash) VALUES (?, ?)",
                 (username, password_hasher.hash(password)),
-            )
-            return cursor.lastrowid
+            ).lastrowid
         try:
             password_hasher.verify(user["password_hash"], password)
         except VerifyMismatchError:
@@ -94,67 +115,113 @@ def authenticate_mvp_user(username: str, password: str) -> int | None:
         return user["id"]
 
 
-def get_or_create_board(user_id: int) -> int:
-    initialize_database()
-    with connect() as connection:
-        board = connection.execute(
-            "SELECT id FROM boards WHERE user_id = ?", (user_id,)
-        ).fetchone()
-        if board is not None:
-            return board["id"]
-
-        board_id = connection.execute(
-            "INSERT INTO boards (user_id) VALUES (?)", (user_id,)
-        ).lastrowid
-        column_ids = []
-        for position, title in enumerate(INITIAL_COLUMNS):
-            column_ids.append(
-                connection.execute(
-                    "INSERT INTO board_columns (board_id, title, position) VALUES (?, ?, ?)",
-                    (board_id, title, position),
-                ).lastrowid
-            )
-        card_positions = [0] * len(INITIAL_COLUMNS)
-        for column_position, title, details in INITIAL_CARDS:
-            connection.execute(
-                "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
-                (
-                    column_ids[column_position],
-                    title,
-                    details,
-                    card_positions[column_position],
-                ),
-            )
-            card_positions[column_position] += 1
-        return board_id
-
-
 def board_data(user_id: int) -> dict[str, object]:
-    board_id = get_or_create_board(user_id)
-    with connect() as connection:
-        columns = connection.execute(
-            "SELECT id, title FROM board_columns WHERE board_id = ? ORDER BY position",
-            (board_id,),
-        ).fetchall()
-        cards = connection.execute(
-            """
-            SELECT cards.id, cards.column_id, cards.title, cards.details
-            FROM cards JOIN board_columns ON board_columns.id = cards.column_id
-            WHERE board_columns.board_id = ? ORDER BY cards.position
-            """,
-            (board_id,),
-        ).fetchall()
+    with transaction() as connection:
+        return _board_data(connection, _board_id(connection, user_id))
+
+
+def apply_operations(user_id: int, operations: list[BoardOperation]) -> dict[str, object]:
+    """Applies every operation in one transaction and returns the resulting board.
+
+    Raises BoardItemNotFoundError, leaving the board unchanged, if any operation
+    references a card or column outside the user's board.
+    """
+    with transaction() as connection:
+        board_id = _board_id(connection, user_id)
+        for operation in operations:
+            match operation:
+                case RenameColumn():
+                    _require_column(connection, board_id, operation.column_id)
+                    connection.execute(
+                        "UPDATE board_columns SET title = ? WHERE id = ?",
+                        (operation.title, operation.column_id),
+                    )
+                case CreateCard():
+                    _require_column(connection, board_id, operation.column_id)
+                    connection.execute(
+                        "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
+                        (
+                            operation.column_id,
+                            operation.title,
+                            operation.details,
+                            len(_card_ids(connection, operation.column_id)),
+                        ),
+                    )
+                case UpdateCard():
+                    _require_card_column(connection, board_id, operation.card_id)
+                    connection.execute(
+                        """
+                        UPDATE cards SET title = coalesce(?, title), details = coalesce(?, details),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                        """,
+                        (operation.title, operation.details, operation.card_id),
+                    )
+                case MoveCard():
+                    source_id = _require_card_column(connection, board_id, operation.card_id)
+                    _require_column(connection, board_id, operation.column_id)
+                    source_cards = _card_ids(connection, source_id)
+                    source_cards.remove(operation.card_id)
+                    target_cards = (
+                        source_cards
+                        if source_id == operation.column_id
+                        else _card_ids(connection, operation.column_id)
+                    )
+                    target_cards.insert(min(operation.position, len(target_cards)), operation.card_id)
+                    _write_column_order(connection, source_id, source_cards)
+                    if source_id != operation.column_id:
+                        _write_column_order(connection, operation.column_id, target_cards)
+                case DeleteCard():
+                    column_id = _require_card_column(connection, board_id, operation.card_id)
+                    connection.execute("DELETE FROM cards WHERE id = ?", (operation.card_id,))
+                    _write_column_order(connection, column_id, _card_ids(connection, column_id))
+        return _board_data(connection, board_id)
+
+
+def _board_id(connection: sqlite3.Connection, user_id: int) -> int:
+    """Returns the user's board id, creating and seeding the board on first access."""
+    board = connection.execute("SELECT id FROM boards WHERE user_id = ?", (user_id,)).fetchone()
+    if board is not None:
+        return board["id"]
+
+    board_id = connection.execute("INSERT INTO boards (user_id) VALUES (?)", (user_id,)).lastrowid
+    column_ids = [
+        connection.execute(
+            "INSERT INTO board_columns (board_id, title, position) VALUES (?, ?, ?)",
+            (board_id, title, position),
+        ).lastrowid
+        for position, title in enumerate(INITIAL_COLUMNS)
+    ]
+    card_positions = [0] * len(INITIAL_COLUMNS)
+    for column_position, title, details in INITIAL_CARDS:
+        connection.execute(
+            "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
+            (column_ids[column_position], title, details, card_positions[column_position]),
+        )
+        card_positions[column_position] += 1
+    return board_id
+
+
+def _board_data(connection: sqlite3.Connection, board_id: int) -> dict[str, object]:
+    columns = connection.execute(
+        "SELECT id, title FROM board_columns WHERE board_id = ? ORDER BY position",
+        (board_id,),
+    ).fetchall()
+    cards = connection.execute(
+        """
+        SELECT cards.id, cards.column_id, cards.title, cards.details
+        FROM cards JOIN board_columns ON board_columns.id = cards.column_id
+        WHERE board_columns.board_id = ? ORDER BY cards.position
+        """,
+        (board_id,),
+    ).fetchall()
 
     cards_by_column: dict[int, list[str]] = {column["id"]: [] for column in columns}
     card_map: dict[str, dict[str, str]] = {}
     for card in cards:
         card_id = str(card["id"])
         cards_by_column[card["column_id"]].append(card_id)
-        card_map[card_id] = {
-            "id": card_id,
-            "title": card["title"],
-            "details": card["details"],
-        }
+        card_map[card_id] = {"id": card_id, "title": card["title"], "details": card["details"]}
     return {
         "columns": [
             {
@@ -168,174 +235,15 @@ def board_data(user_id: int) -> dict[str, object]:
     }
 
 
-def rename_column(user_id: int, column_id: int, title: str) -> bool:
-    with connect() as connection:
-        result = connection.execute(
-            """
-            UPDATE board_columns SET title = ?
-            WHERE id = ? AND board_id = (SELECT id FROM boards WHERE user_id = ?)
-            """,
-            (title, column_id, user_id),
-        )
-        return result.rowcount == 1
-
-
-def create_card(user_id: int, column_id: int, title: str, details: str) -> int | None:
-    with connect() as connection:
-        column = connection.execute(
-            """
-            SELECT board_columns.id FROM board_columns
-            JOIN boards ON boards.id = board_columns.board_id
-            WHERE board_columns.id = ? AND boards.user_id = ?
-            """,
-            (column_id, user_id),
-        ).fetchone()
-        if column is None:
-            return None
-        position = connection.execute(
-            "SELECT count(*) FROM cards WHERE column_id = ?", (column_id,)
-        ).fetchone()[0]
-        return connection.execute(
-            "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
-            (column_id, title, details, position),
-        ).lastrowid
-
-
-def update_card(
-    user_id: int, card_id: int, title: str | None, details: str | None
-) -> bool:
-    fields = []
-    values: list[str] = []
-    if title is not None:
-        fields.append("title = ?")
-        values.append(title)
-    if details is not None:
-        fields.append("details = ?")
-        values.append(details)
-    if not fields:
-        return False
-    fields.append("updated_at = CURRENT_TIMESTAMP")
-    values.extend([str(card_id), str(user_id)])
-    with connect() as connection:
-        result = connection.execute(
-            f"""
-            UPDATE cards SET {", ".join(fields)}
-            WHERE id = ? AND column_id IN (
-                SELECT board_columns.id FROM board_columns
-                JOIN boards ON boards.id = board_columns.board_id
-                WHERE boards.user_id = ?
-            )
-            """,
-            values,
-        )
-        return result.rowcount == 1
-
-
-def delete_card(user_id: int, card_id: int) -> bool:
-    with connect() as connection:
-        card = connection.execute(
-            """
-            SELECT cards.column_id FROM cards
-            JOIN board_columns ON board_columns.id = cards.column_id
-            JOIN boards ON boards.id = board_columns.board_id
-            WHERE cards.id = ? AND boards.user_id = ?
-            """,
-            (card_id, user_id),
-        ).fetchone()
-        if card is None:
-            return False
-        connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
-        _write_column_order(connection, card["column_id"], _card_ids(connection, card["column_id"]))
-        return True
-
-
-def move_card(user_id: int, card_id: int, column_id: int, position: int) -> bool:
-    with connect() as connection:
-        card = connection.execute(
-            """
-            SELECT cards.column_id FROM cards
-            JOIN board_columns ON board_columns.id = cards.column_id
-            JOIN boards ON boards.id = board_columns.board_id
-            WHERE cards.id = ? AND boards.user_id = ?
-            """,
-            (card_id, user_id),
-        ).fetchone()
-        target = connection.execute(
-            """
-            SELECT board_columns.id FROM board_columns
-            JOIN boards ON boards.id = board_columns.board_id
-            WHERE board_columns.id = ? AND boards.user_id = ?
-            """,
-            (column_id, user_id),
-        ).fetchone()
-        if card is None or target is None:
-            return False
-
-        source_id = card["column_id"]
-        source_cards = _card_ids(connection, source_id)
-        source_cards.remove(card_id)
-        target_cards = source_cards if source_id == column_id else _card_ids(connection, column_id)
-        target_cards.insert(min(position, len(target_cards)), card_id)
-        _write_column_order(connection, source_id, source_cards)
-        if source_id != column_id:
-            _write_column_order(connection, column_id, target_cards)
-        return True
-
-
-class AICommandError(ValueError):
-    pass
-
-
-def apply_ai_operations(user_id: int, operations: list[dict[str, object]]) -> None:
-    board_id = get_or_create_board(user_id)
-    with connect() as connection:
-        for operation in operations:
-            command_type = operation["type"]
-            if command_type == "rename_column":
-                _rename_column_in_connection(
-                    connection, board_id, int(operation["columnId"]), str(operation["title"])
-                )
-            elif command_type == "create_card":
-                _create_card_in_connection(
-                    connection,
-                    board_id,
-                    int(operation["columnId"]),
-                    str(operation["title"]),
-                    str(operation.get("details", "")),
-                )
-            elif command_type == "update_card":
-                _update_card_in_connection(
-                    connection,
-                    board_id,
-                    int(operation["cardId"]),
-                    operation.get("title"),
-                    operation.get("details"),
-                )
-            elif command_type == "move_card":
-                _move_card_in_connection(
-                    connection,
-                    board_id,
-                    int(operation["cardId"]),
-                    int(operation["columnId"]),
-                    int(operation["position"]),
-                )
-            elif command_type == "delete_card":
-                _delete_card_in_connection(connection, board_id, int(operation["cardId"]))
-            else:
-                raise AICommandError("AI response contains an unsupported operation.")
-
-
-def _column_belongs_to_board(
-    connection: sqlite3.Connection, board_id: int, column_id: int
-) -> bool:
-    return connection.execute(
+def _require_column(connection: sqlite3.Connection, board_id: int, column_id: int) -> None:
+    if connection.execute(
         "SELECT 1 FROM board_columns WHERE id = ? AND board_id = ?", (column_id, board_id)
-    ).fetchone() is not None
+    ).fetchone() is None:
+        raise BoardItemNotFoundError("Column not found.")
 
 
-def _card_column_for_board(
-    connection: sqlite3.Connection, board_id: int, card_id: int
-) -> int | None:
+def _require_card_column(connection: sqlite3.Connection, board_id: int, card_id: int) -> int:
+    """Returns the id of the column holding the card."""
     row = connection.execute(
         """
         SELECT cards.column_id FROM cards
@@ -344,84 +252,9 @@ def _card_column_for_board(
         """,
         (card_id, board_id),
     ).fetchone()
-    return row["column_id"] if row is not None else None
-
-
-def _rename_column_in_connection(
-    connection: sqlite3.Connection, board_id: int, column_id: int, title: str
-) -> None:
-    if not _column_belongs_to_board(connection, board_id, column_id):
-        raise AICommandError("AI response references a column outside this board.")
-    connection.execute("UPDATE board_columns SET title = ? WHERE id = ?", (title, column_id))
-
-
-def _create_card_in_connection(
-    connection: sqlite3.Connection,
-    board_id: int,
-    column_id: int,
-    title: str,
-    details: str,
-) -> None:
-    if not _column_belongs_to_board(connection, board_id, column_id):
-        raise AICommandError("AI response references a column outside this board.")
-    position = connection.execute(
-        "SELECT count(*) FROM cards WHERE column_id = ?", (column_id,)
-    ).fetchone()[0]
-    connection.execute(
-        "INSERT INTO cards (column_id, title, details, position) VALUES (?, ?, ?, ?)",
-        (column_id, title, details, position),
-    )
-
-
-def _update_card_in_connection(
-    connection: sqlite3.Connection,
-    board_id: int,
-    card_id: int,
-    title: object | None,
-    details: object | None,
-) -> None:
-    if _card_column_for_board(connection, board_id, card_id) is None:
-        raise AICommandError("AI response references a card outside this board.")
-    fields = []
-    values: list[object] = []
-    if title is not None:
-        fields.append("title = ?")
-        values.append(title)
-    if details is not None:
-        fields.append("details = ?")
-        values.append(details)
-    fields.append("updated_at = CURRENT_TIMESTAMP")
-    values.append(card_id)
-    connection.execute(f"UPDATE cards SET {', '.join(fields)} WHERE id = ?", values)
-
-
-def _delete_card_in_connection(
-    connection: sqlite3.Connection, board_id: int, card_id: int
-) -> None:
-    column_id = _card_column_for_board(connection, board_id, card_id)
-    if column_id is None:
-        raise AICommandError("AI response references a card outside this board.")
-    connection.execute("DELETE FROM cards WHERE id = ?", (card_id,))
-    _write_column_order(connection, column_id, _card_ids(connection, column_id))
-
-
-def _move_card_in_connection(
-    connection: sqlite3.Connection,
-    board_id: int,
-    card_id: int,
-    column_id: int,
-    position: int,
-) -> None:
-    source_id = _card_column_for_board(connection, board_id, card_id)
-    if source_id is None or not _column_belongs_to_board(connection, board_id, column_id):
-        raise AICommandError("AI response references a card or column outside this board.")
-    source_cards = _card_ids(connection, source_id)
-    source_cards.remove(card_id)
-    target_cards = source_cards if source_id == column_id else _card_ids(connection, column_id)
-    target_cards.insert(min(position, len(target_cards)), card_id)
-    _write_column_order(connection, source_id, source_cards)
-    if source_id != column_id:
-        _write_column_order(connection, column_id, target_cards)
+    if row is None:
+        raise BoardItemNotFoundError("Card not found.")
+    return row["column_id"]
 
 
 def _card_ids(connection: sqlite3.Connection, column_id: int) -> list[int]:

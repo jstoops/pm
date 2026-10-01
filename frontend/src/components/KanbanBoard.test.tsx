@@ -46,6 +46,9 @@ beforeEach(() => {
             ? { ...column, cardIds: [...column.cardIds, cardId] }
             : column
         );
+      } else if (init?.method === "PATCH") {
+        const cardId = url.split("/").at(-1) ?? "";
+        board.cards[cardId] = { ...board.cards[cardId], ...payload };
       } else if (init?.method === "DELETE") {
         const cardId = url.split("/").at(-1) ?? "";
         delete board.cards[cardId];
@@ -85,6 +88,42 @@ describe("KanbanBoard", () => {
     await user.tab();
 
     expect(input).toHaveValue("New Name");
+  });
+
+  it("restores a blank column title without saving it", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const input = within(getFirstColumn()).getByLabelText("Column title");
+    await user.clear(input);
+    await user.tab();
+
+    expect(input).toHaveValue("Backlog");
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it("edits a card", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const column = getFirstColumn();
+    await user.click(within(column).getByRole("button", { name: "Edit Roadmap" }));
+
+    const titleInput = within(column).getByLabelText("Card title");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Roadmap v2");
+    const detailsInput = within(column).getByLabelText("Card details");
+    await user.clear(detailsInput);
+    await user.type(detailsInput, "Revised plan.");
+    await user.click(within(column).getByRole("button", { name: "Save" }));
+
+    expect(await within(column).findByText("Roadmap v2")).toBeInTheDocument();
+    expect(within(column).getByText("Revised plan.")).toBeInTheDocument();
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledWith(
+      "/api/board/cards/1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ title: "Roadmap v2", details: "Revised plan." }),
+      })
+    );
   });
 
   it("adds and removes a card", async () => {

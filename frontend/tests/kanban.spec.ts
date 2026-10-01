@@ -146,6 +146,39 @@ test.describe("authenticated board", () => {
     await expect(targetColumn.getByText(title)).toBeVisible();
   });
 
+  test("persists an edited card after reload", async ({ page }) => {
+    const title = uniqueTitle("Editable card");
+    await createCard(page, title);
+    const cardTestId = await page
+      .locator('[data-testid^="card-"]')
+      .filter({ has: page.getByRole("heading", { name: title, exact: true }) })
+      .getAttribute("data-testid");
+    const card = page.getByTestId(cardTestId!);
+
+    await card.getByRole("button", { name: `Edit ${title}` }).click();
+    await card.getByLabel("Card title").fill(`${title} edited`);
+    await card.getByLabel("Card details").fill("Edited by Playwright.");
+    const saved = page.waitForResponse(
+      (response) => response.request().method() === "PATCH" && response.ok()
+    );
+    await card.getByRole("button", { name: "Save" }).click();
+    await saved;
+
+    await page.reload();
+    await expect(page.getByRole("heading", { name: `${title} edited` })).toBeVisible();
+    await expect(page.getByText("Edited by Playwright.")).toBeVisible();
+  });
+
+  test("returns to sign in when the session has expired", async ({ page }) => {
+    await page.context().clearCookies();
+    const column = page.locator('[data-testid^="column-"]').first();
+    await column.getByRole("button", { name: /add a card/i }).click();
+    await column.getByPlaceholder("Card title").fill("Unsaved card");
+    await column.getByRole("button", { name: /add card/i }).click();
+
+    await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  });
+
   test("shows an AI board update without a manual reload", async ({ page }) => {
     const board = (await (await page.request.get("/api/board")).json()) as Board & {
       columns: { id: string; title: string; cardIds: string[] }[];
@@ -219,6 +252,28 @@ test.describe("authenticated board", () => {
       await dragCardAbove(page, "Gamma", 0, 1);
 
       await expectFirstColumn(page, ["Alpha", "Gamma", "Beta"]);
+    });
+
+    test("moves a card down its column with the keyboard", async ({ page }) => {
+      const moveResponse = page.waitForResponse(
+        (response) => response.url().includes("/move") && response.status() === 200
+      );
+      const card = page
+        .locator('[data-testid^="card-"]')
+        .filter({ has: page.getByRole("heading", { name: "Alpha", exact: true }) });
+      const dragId = (await card.getAttribute("data-testid"))!.replace("card-", "card:");
+      await card.focus();
+      // dnd-kit announces each keyboard drag step. Waiting for them keeps key
+      // presses from arriving before the sensor has attached its listener.
+      const announcement = page.getByRole("status");
+      await page.keyboard.press("Space");
+      await expect(announcement).toContainText(`over droppable area ${dragId}.`);
+      await page.keyboard.press("ArrowDown");
+      await expect(announcement).not.toContainText(`over droppable area ${dragId}.`);
+      await page.keyboard.press("Space");
+      await moveResponse;
+
+      await expectFirstColumn(page, ["Beta", "Alpha", "Gamma"]);
     });
   });
 });

@@ -32,12 +32,14 @@ export const parseDragId = (dragId: string): DropTarget => {
 };
 
 /**
- * Moves a card in front of the target card, or to the end of the target column.
+ * Moves a card in front of the target card (or behind it when `afterTarget` is
+ * set), or to the end of the target column.
  */
 export const moveCard = (
   columns: Column[],
   cardId: string,
-  target: DropTarget
+  target: DropTarget,
+  afterTarget = false
 ): Column[] => {
   const source = columns.find((column) => column.cardIds.includes(cardId));
   const destination =
@@ -52,10 +54,10 @@ export const moveCard = (
   const remaining = source.cardIds.filter((id) => id !== cardId);
   const isSameColumn = source.id === destination.id;
   const nextCardIds = isSameColumn ? [...remaining] : [...destination.cardIds];
-  const beforeIndex =
+  const targetIndex =
     target.type === "card" ? nextCardIds.indexOf(target.id) : -1;
   nextCardIds.splice(
-    beforeIndex === -1 ? nextCardIds.length : beforeIndex,
+    targetIndex === -1 ? nextCardIds.length : targetIndex + Number(afterTarget),
     0,
     cardId
   );

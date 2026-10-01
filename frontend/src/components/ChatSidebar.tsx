@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { redirectIfUnauthorized } from "@/lib/api";
 import type { BoardData } from "@/lib/kanban";
 
 type ChatMessage = {
@@ -38,6 +39,7 @@ export const ChatSidebar = ({ onBoardUpdate }: ChatSidebarProps) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: question, history: messages.slice(-12) }),
       });
+      redirectIfUnauthorized(response);
       if (!response.ok) {
         throw new Error("Unable to send message.");
       }

@@ -1,10 +1,11 @@
 import json
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError
 
-from app.database import AICommandError, apply_ai_operations, board_data
+from app.database import BoardItemNotFoundError, apply_operations, board_data
 from app.openrouter import OpenRouterError, ask_openrouter
+from app.operations import BoardOperation
 
 MAX_HISTORY_MESSAGES = 12
 
@@ -19,58 +20,29 @@ class ChatRequest(BaseModel):
     history: list[ConversationMessage] = Field(default_factory=list, max_length=MAX_HISTORY_MESSAGES)
 
 
-class RenameColumnOperation(BaseModel):
-    type: Literal["rename_column"]
-    column_id: int = Field(alias="columnId", ge=1)
-    title: str = Field(min_length=1, max_length=120)
-
-
-class CreateCardOperation(BaseModel):
-    type: Literal["create_card"]
-    column_id: int = Field(alias="columnId", ge=1)
-    title: str = Field(min_length=1, max_length=240)
-    details: str = Field(default="", max_length=4000)
-
-
-class UpdateCardOperation(BaseModel):
-    type: Literal["update_card"]
-    card_id: int = Field(alias="cardId", ge=1)
-    title: str | None = Field(default=None, min_length=1, max_length=240)
-    details: str | None = Field(default=None, max_length=4000)
-
-    @model_validator(mode="after")
-    def requires_change(self) -> "UpdateCardOperation":
-        if self.title is None and self.details is None:
-            raise ValueError("update_card requires title or details")
-        return self
-
-
-class MoveCardOperation(BaseModel):
-    type: Literal["move_card"]
-    card_id: int = Field(alias="cardId", ge=1)
-    column_id: int = Field(alias="columnId", ge=1)
-    position: int = Field(ge=0)
-
-
-class DeleteCardOperation(BaseModel):
-    type: Literal["delete_card"]
-    card_id: int = Field(alias="cardId", ge=1)
-
-
-BoardOperation = Annotated[
-    RenameColumnOperation
-    | CreateCardOperation
-    | UpdateCardOperation
-    | MoveCardOperation
-    | DeleteCardOperation,
-    Field(discriminator="type"),
-]
-
-
 class AIOutput(BaseModel):
     version: Literal[1]
     assistant_text: str = Field(alias="assistantText", min_length=1, max_length=4000)
     operations: list[BoardOperation] = Field(default_factory=list, max_length=20)
+
+
+RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "board_assistant_response",
+        "schema": AIOutput.model_json_schema(by_alias=True),
+    },
+}
+
+SYSTEM_PROMPT = (
+    "You manage a Kanban board. Reply only with JSON matching this schema: "
+    '{"version":1,"assistantText":"string","operations":[]}. '
+    "Operations may be rename_column(columnId,title), create_card(columnId,title,details), "
+    "update_card(cardId,title?,details?), move_card(cardId,columnId,position), or delete_card(cardId). "
+    "Use only numeric IDs present in the provided board. "
+    "position is the zero-based index the card should occupy in the target column after the move. "
+    "Return an empty operations list when no board change is needed."
+)
 
 
 class AIOutputError(ValueError):
@@ -78,23 +50,13 @@ class AIOutputError(ValueError):
 
 
 def request_ai_update(user_id: int, request: ChatRequest) -> tuple[AIOutput, dict[str, object] | None]:
-    board = board_data(user_id)
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You manage a Kanban board. Reply only with JSON matching this schema: "
-                '{"version":1,"assistantText":"string","operations":[]}. '
-                "Operations may be rename_column(columnId,title), create_card(columnId,title,details), "
-                "update_card(cardId,title?,details?), move_card(cardId,columnId,position), or delete_card(cardId). "
-                "Use only numeric IDs present in the provided board."
-            ),
-        },
+        {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": json.dumps(
                 {
-                    "board": board,
+                    "board": board_data(user_id),
                     "history": [message.model_dump() for message in request.history],
                     "question": request.message,
                 }
@@ -102,17 +64,13 @@ def request_ai_update(user_id: int, request: ChatRequest) -> tuple[AIOutput, dic
         },
     ]
     try:
-        output = AIOutput.model_validate_json(ask_openrouter(messages))
+        output = AIOutput.model_validate_json(ask_openrouter(messages, RESPONSE_FORMAT))
     except (OpenRouterError, ValidationError) as error:
         raise AIOutputError("The AI response could not be processed.") from error
 
-    if output.operations:
-        try:
-            apply_ai_operations(
-                user_id,
-                [operation.model_dump(by_alias=True, exclude_none=True) for operation in output.operations],
-            )
-        except AICommandError as error:
-            raise AIOutputError("The AI response requested an invalid board change.") from error
-        return output, board_data(user_id)
-    return output, None
+    if not output.operations:
+        return output, None
+    try:
+        return output, apply_operations(user_id, output.operations)
+    except BoardItemNotFoundError as error:
+        raise AIOutputError("The AI response requested an invalid board change.") from error

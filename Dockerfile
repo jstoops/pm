@@ -23,9 +23,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH"
 
-COPY backend /app
+COPY backend/pyproject.toml backend/uv.lock /app/
 
-RUN uv sync --no-dev
+RUN uv sync --locked --no-dev
+
+COPY backend /app
 
 COPY --from=frontend-build /frontend/out /app/app/static
 

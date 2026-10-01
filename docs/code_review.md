@@ -4,6 +4,8 @@ Date: 2026-09-30. Scope: the whole repository at commit `19eb771` (backend, fron
 
 At review time the backend tests (12), frontend unit tests (23), Playwright tests (11, against Docker), lint, type check and build all pass. Findings are ordered by priority. Each has an action. The checkboxes track progress.
 
+**Status (2026-09-30): all findings remediated.** Notes on deviations from the original actions are inline, marked "Resolution".
+
 ## Summary
 
 | # | Priority | Area | Finding |
@@ -29,15 +31,16 @@ At review time the backend tests (12), frontend unit tests (23), Playwright test
 
 `AGENTS.md` requires that cards "can be moved with drag and drop, and edited". The backend supports `PATCH /api/board/cards/{id}`, but no frontend component calls it. `KanbanCard.tsx` only renders the title, details and a delete button, and the only `PATCH` in `KanbanBoard.tsx` is the column rename. Users can only change a card's text through the AI chat.
 
-- [ ] Add inline editing of title and details to `KanbanCard` (for example, click to edit, then save on submit or blur), wired through `applyBoardChange` to `PATCH /api/board/cards/{id}`.
-- [ ] Add a unit test in `KanbanBoard.test.tsx` and a Playwright test that confirms an edit persists after reload.
+- [x] Add inline editing of title and details to `KanbanCard` (for example, click to edit, then save on submit or blur), wired through `applyBoardChange` to `PATCH /api/board/cards/{id}`.
+- [x] Add a unit test in `KanbanBoard.test.tsx` and a Playwright test that confirms an edit persists after reload.
 
 ### 2. Playwright tests destroy real board data
 
 `frontend/tests/kanban.spec.ts` `resetCards` deletes every card on the board and replaces them with Alpha, Beta, Gamma and Solo. It runs before each of the four "drops near the top of a column" tests. Other tests add "Persistent card", "Moved card" and "Logged out card" entries that are never removed. Because the documented way to run e2e is against the Docker app (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:8000`), the tests run against the `app-data` volume, so every run wipes the user's real board.
 
-- [ ] Run e2e against a disposable database. The simplest option is a separate compose project for tests, for example `docker compose -p pm-test up` with its own volume and port, or set `DATABASE_PATH=/tmp/e2e.db` for the test container.
-- [ ] Update `frontend/AGENTS.md` and `CLAUDE.md` to make the isolated setup the documented way to run e2e.
+- [x] Run e2e against a disposable database. The simplest option is a separate compose project for tests, for example `docker compose -p pm-test up` with its own volume and port, or set `DATABASE_PATH=/tmp/e2e.db` for the test container.
+  - Resolution: `frontend/tests/global-setup.ts` starts Compose project `pm-e2e` on port 8001 and runs `down --volumes` afterwards. `PLAYWRIGHT_BASE_URL` was removed so tests cannot be pointed at the real app by accident.
+- [x] Update `frontend/AGENTS.md` and `CLAUDE.md` to make the isolated setup the documented way to run e2e.
 
 ## Medium
 
@@ -45,41 +48,43 @@ At review time the backend tests (12), frontend unit tests (23), Playwright test
 
 `backend/app/main.py` strips titles after Pydantic validation. `ColumnRenameRequest` and `CardCreateRequest` accept `"   "` (length is at least 1), the stripped `""` reaches SQLite, and the `CHECK (length(trim(title)) > 0)` constraint raises an uncaught `sqlite3.IntegrityError`. Verified in the container against a temporary database: renaming a column to `"   "` returns 500, creating a card titled `"  "` returns 500, and renaming to `""` returns 422. The AI path has the same issue: a whitespace-only title in `rename_column`, `create_card` or `update_card` raises `IntegrityError`, not `AICommandError`, so `/api/chat` returns 500 instead of 502 (the transaction still rolls back). `update_board_card` works around this with a manual check.
 
-- [ ] Validate titles once in the models using Pydantic's `StringConstraints(strip_whitespace=True, min_length=1, max_length=...)` (an `Annotated` type), in both `main.py` request models and `ai.py` operation models. Then remove the manual `.strip()` calls and the empty-title check in `update_board_card`.
-- [ ] Add backend tests for whitespace-only titles on rename, create, update and the AI path.
+- [x] Validate titles once in the models using Pydantic's `StringConstraints(strip_whitespace=True, min_length=1, max_length=...)` (an `Annotated` type), in both `main.py` request models and `ai.py` operation models. Then remove the manual `.strip()` calls and the empty-title check in `update_board_card`.
+- [x] Add backend tests for whitespace-only titles on rename, create, update and the AI path.
 
 ### 4. Board mutations are implemented twice
 
 `database.py` has one set of functions for the REST routes (`rename_column`, `create_card`, `update_card`, `delete_card`, `move_card`) and a parallel set for AI operations (`_rename_column_in_connection`, `_create_card_in_connection`, and so on). The ownership checks, position logic and SQL are duplicated. `PLAN.md` Part 9 says AI changes go "through the same service layer used by board APIs", which is not the case today. `apply_ai_operations` also converts the validated Pydantic operations back into dicts, re-casts each field with `int()`/`str()`, and keeps an unreachable "unsupported operation" branch.
 
-- [ ] Make the `_..._in_connection` helpers the single implementation. Have each REST function open a connection, look up the board id and call the same helper, mapping `AICommandError` (renamed to something like `BoardNotFoundError`) to 404.
-- [ ] Pass the typed operation models to `apply_ai_operations` and dispatch on type, removing the dict round trip and the unreachable branch.
+- [x] Make the `_..._in_connection` helpers the single implementation. Have each REST function open a connection, look up the board id and call the same helper, mapping `AICommandError` (renamed to something like `BoardNotFoundError`) to 404.
+- [x] Pass the typed operation models to `apply_ai_operations` and dispatch on type, removing the dict round trip and the unreachable branch.
 
 ### 5. Expired sessions are not handled
 
 `SESSION_SECRET` defaults to a new random value on every process start, so each container restart logs everyone out. An open board tab then gets 401 on every action, and the UI shows only "Unable to save that change" or "Unable to reach the assistant". On the initial load, "Retry" fails the same way indefinitely. Nothing sends the user back to the login page.
 
-- [ ] In `boardRequest` (`KanbanBoard.tsx`) and the chat `fetch` (`ChatSidebar.tsx`), redirect to `/login` when the response status is 401.
-- [ ] Optionally set `SESSION_SECRET` in `.env` so restarts do not end sessions, and mention it in `.env` setup docs.
+- [x] In `boardRequest` (`KanbanBoard.tsx`) and the chat `fetch` (`ChatSidebar.tsx`), redirect to `/login` when the response status is 401.
+- [x] Optionally set `SESSION_SECRET` in `.env` so restarts do not end sessions, and mention it in `.env` setup docs.
 
 ### 6. Clearing a column title leaves the input empty
 
 `ColumnTitle` in `KanbanColumn.tsx` keeps the edited value in local state and is reset only when `column.title` changes (`key={column.title}`). Clearing the title and leaving the field sends an empty rename, which fails (see #3), the board title is unchanged, so the input stays blank while the server still has the old name. It also sends a `PATCH` and a full board reload on every blur, even when nothing changed.
 
-- [ ] On blur, if the trimmed value is empty or equal to `initialTitle`, restore `initialTitle` and skip the request.
+- [x] On blur, if the trimmed value is empty or equal to `initialTitle`, restore `initialTitle` and skip the request.
 
 ### 7. AI output is not constrained to JSON
 
 `openrouter.py` sends only `model` and `messages`. The system prompt asks for JSON, but nothing enforces it, and any reply wrapped in a Markdown code fence or prefixed with text fails validation and returns 502. The prompt also does not say that `position` is zero-based or that `operations` can be omitted.
 
-- [ ] Send `response_format` with a JSON schema (OpenRouter structured outputs) generated from `AIOutput.model_json_schema(by_alias=True)`, and confirm with the smoke script that `openai/gpt-oss-120b` honors it.
-- [ ] Add one sentence to the system prompt describing `position` and when to return no operations.
+- [x] Send `response_format` with a JSON schema (OpenRouter structured outputs) generated from `AIOutput.model_json_schema(by_alias=True)`, and confirm with the smoke script that `openai/gpt-oss-120b` honors it.
+  - Resolution: confirmed with one live `/api/chat` request against a temporary database. It returned valid output and applied a create and a move correctly.
+- [x] Add one sentence to the system prompt describing `position` and when to return no operations.
 
 ### 8. Default `npm run test:e2e` cannot pass
 
 Without `PLAYWRIGHT_BASE_URL`, `playwright.config.ts` starts `next dev` on port 3000. The static-export frontend has no API proxy, so login and every board test fail there. `frontend/README.md` lists `npm run test:e2e` without this caveat.
 
-- [ ] Make the Docker URL the default `baseURL` and remove the `webServer` block, or document clearly that the backend must be running. Combine with the isolated test database from #2.
+- [x] Make the Docker URL the default `baseURL` and remove the `webServer` block, or document clearly that the backend must be running. Combine with the isolated test database from #2.
+  - Resolution: done as part of #2; Playwright also runs with one worker because all tests share one user's board.
 
 ## Low
 
@@ -87,43 +92,47 @@ Without `PLAYWRIGHT_BASE_URL`, `playwright.config.ts` starts `next dev` on port 
 
 `backend/uv.lock` is not committed, and the Dockerfile runs `uv sync --no-dev` against version ranges, so each image build can pick different dependency versions. `COPY backend /app` also comes before `uv sync`, so any backend code change reinstalls all dependencies.
 
-- [ ] Generate and commit `backend/uv.lock` (for example, `docker compose run --rm app uv lock`, then copy it out), and use `uv sync --locked --no-dev`.
-- [ ] Copy `pyproject.toml` and `uv.lock` first, run `uv sync`, then copy the rest of `backend/` to keep the dependency layer cached. `tests/` can be excluded from the runtime image with `.dockerignore`.
+- [x] Generate and commit `backend/uv.lock` (for example, `docker compose run --rm app uv lock`, then copy it out), and use `uv sync --locked --no-dev`.
+- [x] Copy `pyproject.toml` and `uv.lock` first, run `uv sync`, then copy the rest of `backend/` to keep the dependency layer cached. `tests/` can be excluded from the runtime image with `.dockerignore`.
+  - Resolution: `tests/` stays in the image because the documented backend test command runs pytest inside the app container.
 
 ### 10. Card position is computed outside a write lock
 
 `create_card` and `_create_card_in_connection` read `count(*)` and then insert. SQLite starts a deferred transaction, so two concurrent requests (sync FastAPI routes run in a thread pool; for example a chat request and a board edit) can read the same count and the second insert fails on `UNIQUE(column_id, position)` with a 500. The frontend serializes its own board requests, so this is unlikely in practice.
 
-- [ ] Open write transactions with `BEGIN IMMEDIATE` in `connect()` (for example, set `isolation_level="IMMEDIATE"`), which serializes writers with no other code changes.
+- [x] Open write transactions with `BEGIN IMMEDIATE` in `connect()` (for example, set `isolation_level="IMMEDIATE"`), which serializes writers with no other code changes.
+  - Resolution: `isolation_level="IMMEDIATE"` only begins the transaction at the first write, after the `count(*)` read, so it would not fix the race. `database.transaction()` issues `BEGIN IMMEDIATE` explicitly before any read. 40 concurrent creates into one column all succeeded.
 
 ### 11. No keyboard support for moving cards
 
 `KanbanBoard.tsx` registers only `PointerSensor`. The cards get `role="button"` and `tabIndex` from dnd-kit but cannot be moved with the keyboard.
 
-- [ ] Add `useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })`.
+- [x] Add `useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })`.
+  - Resolution: also needed a `closestCorners` fallback in the pointer-only collision detection, keyboard-specific placement when moving down a column, and an activator ref on the card so Space/Enter on the edit and delete buttons do not start a drag.
 
 ### 12. Schema DDL runs on every request
 
 `initialize_database()` runs the full `CREATE TABLE IF NOT EXISTS` script on every login and every board read, through `get_or_create_board`.
 
-- [ ] Call `initialize_database()` once from a FastAPI `lifespan` handler and remove the per-request calls. Tests that patch `DATABASE_PATH` would call it in their fixture.
+- [x] Call `initialize_database()` once from a FastAPI `lifespan` handler and remove the per-request calls. Tests that patch `DATABASE_PATH` would call it in their fixture.
 
 ### 13. `test_main.py` uses the real database volume
 
 `docker compose run` mounts the `app-data` volume. Tests in `test_main.py` do not use the `database_path` fixture, so the login tests open `/app/data/project_management.db` and can create the user row there.
 
-- [ ] Move the `database_path` fixture into `backend/tests/conftest.py` with `autouse=True`, which also removes the copy in each test file.
+- [x] Move the `database_path` fixture into `backend/tests/conftest.py` with `autouse=True`, which also removes the copy in each test file.
 
 ### 14. Cleanup
 
-- [ ] Remove `GET /api/example` and its test; it was a Part 2 connectivity check. `GET /api/auth/session` is also unused by the frontend; keep it only if it is wanted for tests.
-- [ ] Remove `backend/app/static/index.html` (the Part 2 placeholder); the Docker build replaces `app/static/` anyway.
-- [ ] Stop tracking `frontend/test-results/.last-run.json` and add `test-results/` and `playwright-report/` to `frontend/.gitignore`.
-- [ ] Remove `.vscode/settings.json` from the repository. It holds editor auto-approval rules from earlier agent sessions, including long one-off Playwright commands.
-- [ ] Serve `favicon.ico` from the static export (it currently returns 404 because only `/`, `/login` and `/_next` are routed).
-- [ ] Align `eslint-config-next` (16.1.6) with the installed `next` (16.3.6).
-- [ ] Remove the unneeded `useMemo` for `cardsById` in `KanbanBoard.tsx`, and the second `require_authenticated` call in each mutation route in `main.py` (store the user id once).
-- [ ] Add a minimal root `README.md`: prerequisites (Docker, `.env` with `OPENROUTER_API_KEY`), start/stop scripts, and test commands. `frontend/README.md` predates the Docker setup.
+- [x] Remove `GET /api/example` and its test; it was a Part 2 connectivity check. `GET /api/auth/session` is also unused by the frontend; keep it only if it is wanted for tests.
+  - Resolution: `/api/example` removed. `/api/auth/session` kept; the backend tests use it to check login and logout.
+- [x] Remove `backend/app/static/index.html` (the Part 2 placeholder); the Docker build replaces `app/static/` anyway.
+- [x] Stop tracking `frontend/test-results/.last-run.json` and add `test-results/` and `playwright-report/` to `frontend/.gitignore`.
+- [x] Remove `.vscode/settings.json` from the repository. It holds editor auto-approval rules from earlier agent sessions, including long one-off Playwright commands.
+- [x] Serve `favicon.ico` from the static export (it currently returns 404 because only `/`, `/login` and `/_next` are routed).
+- [x] Align `eslint-config-next` (16.1.6) with the installed `next` (16.3.6).
+- [x] Remove the unneeded `useMemo` for `cardsById` in `KanbanBoard.tsx`, and the second `require_authenticated` call in each mutation route in `main.py` (store the user id once).
+- [x] Add a minimal root `README.md`: prerequisites (Docker, `.env` with `OPENROUTER_API_KEY`), start/stop scripts, and test commands. `frontend/README.md` predates the Docker setup.
 
 ## What is working well
 
