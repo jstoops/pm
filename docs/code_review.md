@@ -1,103 +1,190 @@
-# Code Review: Project Management MVP
+# Code review: Project Management MVP
 
-Reviewed: `backend/app/*` (FastAPI, SQLite, OpenRouter), `frontend/src/*` (Next 16 static export, React 19, dnd-kit), Docker and scripts, tests, and `docs/`.
+Reviewed on 2026-10-01. Scope: the current project, not only a recent diff.
 
-## Overall
+## Conclusion
 
-The architecture is unusually disciplined for an MVP: one service layer (`apply_operations`) is the only code that writes board data, the backend is the single source of truth, card and column ids are namespaced for dnd-kit, and the e2e suite runs on an isolated Compose project. The findings below are mostly edge cases and consistency gaps, not structural problems.
+The architecture fits the local MVP: a static Next.js frontend, authenticated FastAPI routes, SQLite persistence, and a shared transactional board-operation service. The existing tests pass in the environments described below. However, **network exposure, stale AI commands, asynchronous board reconciliation, and failed-save recovery need correction before relying on the app for important board data**.
 
-## High
+This review identifies **2 high-priority, 7 medium-priority, and 2 low-priority findings**. Each includes evidence and a regression-test recommendation. Application code was not changed. This report supersedes the earlier review; unsupported claims from that review are not carried forward as defects.
 
-### 1. A failed column rename leaves the input showing the rejected title
+## Scope and verification
 
-`frontend/src/components/KanbanColumn.tsx:25` holds the title in local state, reset only by remounting through `key={column.title}`. `applyBoardChange` (`frontend/src/components/KanbanBoard.tsx:122`) is called without an optimistic board for renames, so on failure the board keeps the old title, the key does not change, the component is not remounted, and the input keeps the text the server just rejected. The header chips and the input then disagree until a reload.
+Reviewed backend application and tests; frontend components, state utilities, styles, routing and tests; Docker/Compose; Windows and Unix scripts; dependency declarations and lockfile usage; repository guidance; and the plan, database and AI-schema documentation. Generated assets and third-party dependencies were not audited line by line. No live credentials were inspected, no live OpenRouter requests were made, and no existing board database was changed.
 
-Card edits do not have this problem: `setIsEditing(false)` re-renders from `card.title` in board state. Fix by passing the confirmed title down and reconciling on failure, or by restoring the previous value in the error path.
+| Check | Result |
+| --- | --- |
+| Frontend `npm run lint` | Passed. |
+| Frontend `npm run test:unit` | 26 tests passed across 4 files. |
+| Frontend `npm run build` | Passed, including TypeScript and static export. |
+| Backend existing pytest suite | 13 tests passed; one pytest import-rewrite warning. |
+| Temporary frontend reproductions | 3 checks confirmed lost queued results, stale manual/AI response ordering, and failed create/edit/rename behavior. These checks asserted the observed bugs, not the desired behavior. |
+| Isolated backend reproductions | Confirmed stale AI overwrite, deletion of a replacement card after ID reuse, boolean-ID coercion, and uncaught empty OpenRouter choices. |
+| Compose configuration | Parsed successfully. Published app port has no host-IP restriction. |
+| Unix executable metadata | All three `.sh` scripts are tracked as mode `100644`, not executable. |
+| `npm run test:e2e` | Blocked in global setup: Docker Desktop's Linux daemon was unavailable. No browser tests ran. |
 
-### 2. A failed card creation discards the user's typed input
+Backend verification used an isolated Windows Python 3.14.5 environment installed from `backend/uv.lock` with `uv sync --locked --group test`. The test process pointed `main.STATIC_DIRECTORY` at the freshly built `frontend/out`; each test used a temporary SQLite database. This verifies backend logic and exported page responses, **not** the Python 3.13 Docker image, its mounts, or its complete static-serving configuration. Docker build/start/stop, native macOS/Linux execution, real browser drag behavior, and screen-reader behavior remain unverified in this review. No external vulnerability-advisory audit was performed.
 
-`frontend/src/components/NewCardForm.tsx:13-21` closes the form and resets state immediately after calling `onAdd`, before the request resolves. On a 4xx or 5xx the title and details are gone and only the banner in `KanbanBoard` remains. `AGENTS.md` requires a recoverable state without losing valid input; the chat sidebar already does this correctly (`ChatSidebar.test.tsx:45`), the new-card form does not.
+## High-priority findings
 
-## Medium
+### 1. Compose exposes the hardcoded-login app beyond localhost
 
-### 3. `_write_column_order` bumps positions by a hardcoded `1000000`
+**Location:** `compose.yaml:8-9`; `backend/app/main.py:37-52`; `README.md:19-23`.
 
-`backend/app/database.py:273`. This is a magic-number workaround for the `UNIQUE(column_id, position)` constraint, and it silently breaks if a column ever holds a million cards. A two-pass renumber into a temporary range, or dropping the unique constraint in favour of a documented invariant, would be clearer.
+The port mapping `${APP_PORT:-8000}:8000` does not bind a host address. Docker normally publishes it on all host interfaces, although actual remote reachability also depends on the host firewall and Docker configuration. The application uses the publicly documented `user` / `password` login and defaults to HTTP without secure-only cookies.
 
-### 4. `updated_at` is churned for untouched cards on every move
+**Impact:** A machine that permits inbound access can expose the board and AI endpoint to other network users. Those users can authenticate with the documented credentials, modify/delete cards, and send requests using the configured OpenRouter key. This contradicts the local-only security assumption; hardcoded credentials themselves are an explicit MVP choice.
 
-`backend/app/database.py:278` sets `updated_at = CURRENT_TIMESTAMP` for every card in both affected columns, including cards that did not move and did not change. `_board_data` does not return timestamps today, so there is no user-visible effect, but the column will be wrong the moment timestamps are exposed.
+**Recommendation:** Bind the published port to loopback, for example `127.0.0.1:${APP_PORT:-8000}:8000`. Keep Uvicorn listening on all interfaces *inside* the container. Treat any future remote-access configuration as a separate deployment requiring real authentication and TLS.
 
-### 5. `GET /api/board` mutates the database and takes the write lock
+**Regression check:** Assert the resolved Compose port includes `host_ip: 127.0.0.1`, then verify localhost access and lack of LAN access on a Docker-capable host.
 
-`backend/app/database.py:118-120` runs `board_data` inside `transaction()`, which issues `BEGIN IMMEDIATE`, and `_board_id` creates and seeds a board on first read. A read endpoint that writes and serializes on the global SQLite write lock is a surprise for future maintainers and makes every board poll contend with board mutations. Reads could use a deferred transaction, and board creation could move to login.
+### 2. Delayed AI operations can overwrite newer work or delete an unrelated replacement card
 
-### 6. Stale `previousBoard` rollback plus stale optimistic boards
+**Location:** `backend/app/ai.py:52-74`; `backend/app/database.py:123-179`, and the `cards.id INTEGER PRIMARY KEY` declaration.
 
-`frontend/src/components/KanbanBoard.tsx:127`. `previousBoard` is captured from the render closure, and optimistic boards are built from that same stale `board`. If a drag is in flight and a later rename fails, the rollback restores the pre-drag board and discards the optimistic move. The server response is authoritative so the window is narrow, but the rollback path is the one place the client asserts a state it did not verify.
+The AI path reads the board, releases its transaction, calls OpenRouter, and later applies operations in a new transaction without checking whether the board changed. Transactional application prevents partial updates, but does not make the original snapshot current.
 
-### 7. The card `<article>` is a `role="button"` containing two `<button>` elements
+**Reproduced sequences:**
 
-`frontend/src/components/KanbanCard.tsx:65-66` spreads dnd-kit `attributes` (which include `role` and `tabIndex`) onto the card and renders Edit and Delete buttons inside it. That is nested interactive content, which breaks screen-reader semantics and keyboard navigation order. Note also the asymmetry: `attributes` is conditional on `isEditing` but `listeners` is always spread. A dedicated drag handle button would fix both.
+1. AI reads a column title; a manual request renames it while OpenRouter is pending; AI's later rename silently overwrites the manual edit.
+2. AI reads the highest-ID card; a manual delete removes that card; a new card is created. SQLite's ordinary `INTEGER PRIMARY KEY` allocation can reuse the deleted highest ID. The pending AI delete then removes the new, unrelated card. This was reproduced with the real board service and a mocked OpenRouter response.
 
-### 8. E2E and Compose require a root `.env` even though the tests need no API key
+**Recommendation:** Compare the prompt's board snapshot or an explicit board revision against current data *inside the write transaction* before applying AI operations. Reject stale commands with a clear retry/conflict response. Do not hold the SQLite write lock across the network call. Preventing ID reuse alone would not fix stale edits or moves.
 
-`compose.yaml:6-7` uses `env_file: .env` unconditionally, and `frontend/tests/global-setup.ts:8-13` brings the stack up through Compose. `PLAN.md` Part 8 and `AGENTS.md` both state that automated tests must run without a key, but `npm run test:e2e` fails outright on a clean checkout. Marking the file optional (`env_file: { path: .env, required: false }`) or injecting a placeholder in the e2e setup would match the documented contract.
+**Regression tests:** Pause a mocked model call, perform an intervening manual mutation, resume it, and assert no AI changes persist. Cover rename conflicts and delete/create ID reuse. Test through the API as well as the service.
 
-### 9. Card and column ids share a namespace, and the collision guard is spread across three files
+## Medium-priority findings
 
-`frontend/src/lib/kanban.ts:18-32` is the right place for this and it is well tested, but the invariant is only documented in comments and `CLAUDE.md`. Every new droppable has to remember to prefix. A typed `DropTarget` returned from a single `useDroppable` wrapper would make the mistake impossible.
+### 3. A later failed request hides an earlier successful queued save
 
-## Low
+**Location:** `frontend/src/components/KanbanBoard.tsx:122-152`.
 
-### 10. Board JSON is unbounded in the AI prompt
+`boardChangeId` advances when requests are queued, not when they succeed. Responses for all but the newest queued request are discarded. If the newest request fails, an earlier successful response is never reconciled into the displayed board.
 
-`backend/app/ai.py:53-65`. History is capped at 12 messages, but the entire board is serialised on every request with no column or card limit. A large board will silently inflate token cost and latency. A card cap per column in the prompt context would bound it.
+**Reproduction:** Delay a rename of column A, then submit a rename of column B. Resolve A successfully and reject B. The database contains A's rename, but the header chips retain A's old name while the banner says the board is unchanged. A temporary component test confirmed this independently of chat and drag/drop.
 
-### 11. Only `VerifyMismatchError` is caught during login
+**Recommendation:** Retain the latest confirmed server state and reconcile it when the queue settles, including failure paths. Alternatively refetch the board after failed queued operations. Avoid restoring a render-time snapshot as if it were confirmed server state.
 
-`backend/app/database.py:111-114`. A corrupt or non-Argon2 `password_hash` raises `VerificationError` or `InvalidHashError` and surfaces as a 500. No code path writes a bad hash today, so this is latent rather than live.
+**Regression tests:** Earlier success followed by later failure; earlier failure followed by later success; two failures after optimistic movement. Assert visible content and order, not merely the error banner.
 
-### 12. `SESSION_SECRET` and `DATABASE_PATH` are read at import time
+### 4. Chat updates bypass manual-mutation ordering and can be replaced by stale responses
 
-`backend/app/main.py:36` and `backend/app/database.py:19`. Fine for the container, and the test fixture correctly monkeypatches the module global, but neither can be changed after startup. Worth a comment so nobody tries to set them in a lifespan hook.
+**Location:** `frontend/src/components/KanbanBoard.tsx:140-149,321-325`; `frontend/src/components/ChatSidebar.tsx:53-55`.
 
-### 13. Dead columns: `boards.updated_at` and `users.updated_at` are never updated
+Chat sets board state directly without participating in the manual mutation queue or change counter.
 
-Both tables define `updated_at` and nothing in `database.py` writes it. `docs/DATABASE.md:21` describes `users.updated_at` as tracking password changes, which no code path does.
+**Reproduction:** Let a manual rename commit but delay delivery of its response. Let a subsequent AI edit return its newer board first. Deliver the older manual response: the AI edit disappears from the displayed board. A temporary component test confirmed this. An optimistic move's failure rollback can similarly restore state from before a chat update.
 
-### 14. `MAX_HISTORY_MESSAGES` is duplicated as a literal `12` in the frontend
+**Impact:** The UI diverges from persisted data until another successful refresh. This is distinct from finding 2: the server may be completely correct while the browser renders an older response.
 
-`backend/app/ai.py:10` against `frontend/src/components/ChatSidebar.tsx:40` (`messages.slice(-12)`). The backend is the authority; the client literal is an invisible coupling.
+**Recommendation:** Coordinate chat and manual board mutations through one ordering/reconciliation mechanism. A simple MVP option is to serialize them together; otherwise use server revisions and reconcile with a fresh board after overlapping requests settle. Merely incrementing a client counter does not establish server commit order.
 
-### 15. Order-dependent e2e tests sharing one board
+**Regression tests:** Delay a manual response until after an AI response, then exercise both manual success and failure. Also test the reverse response order.
 
-`frontend/tests/kanban.spec.ts`. `resetCards` deletes every card on the board, and the AI test permanently renames column 1 to "AI Backlog" without restoring it. The isolation is correct (own Compose project, own volume, `workers: 1`), but the suite passes only in its current declaration order, and a shared rename/reset helper would make failures easier to read.
+### 5. Failed card creation and editing discard the user's draft
 
-### 16. The test-only extra sync happens at run time
+**Location:** `frontend/src/components/NewCardForm.tsx:13-20`; `frontend/src/components/KanbanCard.tsx:36-50`; `frontend/src/components/KanbanBoard.tsx:201-215`.
 
-`Dockerfile:28` installs with `uv sync --locked --no-dev`, so the documented `uv run --group test pytest` re-syncs and installs the test group inside the container, requiring network at test time. Baking a test stage, or documenting the requirement, would remove the surprise.
+Creation clears both fields and closes immediately after calling a void callback. Editing also closes before the request finishes; reopening resets its state from the unchanged saved card. Neither form can observe whether persistence succeeded because the parent discards the mutation promise and catches errors internally.
 
-### 17. `LoginForm` reports every non-2xx as bad credentials
+**Reproduction:** Fill a card title/details and return HTTP 500 for POST or PATCH. The draft is no longer recoverable through the form. Both paths were reproduced in a component check. Overlong values are another realistic trigger: the browser fields do not enforce the backend's title/details limits.
 
-`frontend/src/components/LoginForm.tsx:33-35`. A 500 or an offline failure tells the user to check their username and password, which sends them the wrong way.
+**Recommendation:** Propagate an explicit success/failure result through the mutation callbacks. Keep the form and draft on failure; clear/close only after success. Disable duplicate submission while pending. Matching client-side length limits would also make validation failures understandable.
 
-### 18. AI operations can delete cards with no confirmation or scope limit
+**Regression tests:** Reject creation and editing, assert both input values survive, then retry successfully. Include backend length-limit rejection, not just a network error.
 
-`docs/AI_SCHEMA.md:34` documents that any valid operation is applied. Combined with board content flowing into the prompt, a user can be talked into a bulk delete. Acceptable for a local MVP, but the AI path is worth distinguishing from direct user edits at some point.
+### 6. A failed column rename still looks saved in the column input
 
-## What is good and should not be lost
+**Location:** `frontend/src/components/KanbanColumn.tsx:24-38,75-80`; `frontend/src/components/KanbanBoard.tsx:193-199`.
 
-- `apply_operations` as the single write path, with `BEGIN IMMEDIATE` and rollback, is the right call and is exercised by real cross-user tests (`backend/tests/test_board_api.py:111`).
-- The dnd-kit id namespacing with `cardDragId` and `columnDropId`, plus `frontend/src/lib/kanban.test.ts` cases that deliberately use colliding ids, is a genuinely careful piece of design.
-- `frontend/tests/global-setup.ts` isolating e2e onto its own Compose project and volume is the right answer to "tests must not touch real data."
-- `redirectIfUnauthorized` centralising the expired-session redirect, and the pointer-only `collisionDetection` in `frontend/src/components/KanbanBoard.tsx:33`, are both documented at the point of complexity.
-- Test coverage of the awkward cases (foreign card ids, blank titles, malformed AI output, colliding ids) is well above typical MVP depth.
+The title input owns local state and resets only when its key, the confirmed column title, changes. A rejected rename leaves that key unchanged and preserves the rejected text. The input and header chip therefore disagree.
 
-## Suggested order
+**Reproduction:** Enter a new column title, blur, and return HTTP 500. The input still displays the new value; the server and header retain the old value. Confirmed by a temporary component check. The existing failed-save test only checks the banner and column count.
 
-1. Items 1 and 2: both are user-visible data loss, both are small fixes with existing test patterns to copy.
-2. Item 8: one-line Compose change, unblocks `npm run test:e2e` on a clean checkout.
-3. Item 7: accessibility fix, contained to one component.
-4. Items 3, 4, 5: backend cleanups, each independently testable.
-5. Items 9 through 18 as opportunistic.
+**Recommendation:** Return the rename result to the input and either restore the confirmed title on failure or visibly retain an unsaved draft with a retry action.
+
+**Regression test:** Assert the input, header chip, saved title, and failure indication agree after rejection and after retry.
+
+### 7. AI validation coerces boolean identifiers into real card IDs
+
+**Location:** `backend/app/operations.py:21-48`; `backend/app/ai.py:23-26,67`.
+
+Pydantic's default integer coercion accepts `true` as `1`; extra properties are also silently ignored. This is not just a cosmetic mismatch with the documented numeric-ID contract.
+
+**Reproduction:** Return an otherwise valid model response containing `{"type":"delete_card","cardId":true,"unexpected":"ignored"}`. It validates and deletes card 1. This was confirmed against an isolated database. Ownership checks still apply, so this is not a cross-user authorization bypass.
+
+**Recommendation:** Make identifiers and positions strict integers, and reject extra fields in the AI envelope and operation models. Ensure nested operation models enforce these constraints too. Keep the generated JSON schema consistent with runtime validation.
+
+**Regression tests:** Boolean and string identifiers, string positions, and unknown fields must reject the complete batch without changing the database. Include a valid operation before an invalid one to verify atomic rejection.
+
+### 8. The documented Unix start/stop commands are not executable in a fresh checkout
+
+**Location:** Git executable metadata for `scripts/start.sh`, `scripts/stop.sh`, and `scripts/smoke-openrouter.sh`; `README.md:20-23`; `docs/PLAN.md` Part 8.
+
+All three shell scripts are tracked as mode `100644`. On a normal Linux/macOS checkout, invoking them directly as documented fails with permission denied before Docker is called. Their shebangs do not confer executable permission.
+
+**Recommendation:** Record mode `100755` for these scripts, or consistently document invocation through `sh`. Setting executable metadata is the smaller fix for the existing usage.
+
+**Regression check:** Inspect `git ls-files -s scripts` and run the documented commands on a Unix checkout. This review verified metadata, not native Unix execution.
+
+### 9. The whole sortable card is an interactive control containing other controls
+
+**Location:** `frontend/src/components/KanbanCard.tsx:54-67,113-130`.
+
+The card article receives dnd-kit button-role/focus attributes while containing independent Edit and Delete buttons. This creates nested interactive semantics and an unnecessarily broad drag activator. The existing keyboard-move test demonstrates one supported drag sequence, but does not establish correct assistive-technology behavior for the nested controls.
+
+**Recommendation:** Give dragging a dedicated, named handle button with the activator ref, attributes and listeners; leave the containing article non-interactive. Keep Edit and Delete as separate sibling controls.
+
+**Regression checks:** Inspect the accessibility tree and tab order, activate Edit/Delete independently, and verify keyboard pickup, movement, drop and cancellation through the handle. The markup concern is supported by source inspection; screen-reader impact was not tested here.
+
+## Low-priority findings
+
+### 10. An empty OpenRouter choices array escapes the error-handling boundary
+
+**Location:** `backend/app/openrouter.py:31-44`; `backend/app/ai.py:67-69`.
+
+`response.json()["choices"][0]` raises `IndexError` for `{"choices":[]}`. The client catches other malformed-response exceptions but not this one, so the chat route produces an unhandled server error instead of its intended controlled upstream error. The live smoke command likewise escapes its friendly `OpenRouterError` handler.
+
+**Evidence:** A mocked HTTP 200 response with an empty choices array reproduced the uncaught `IndexError`. No claim is made that the live provider currently emits this response.
+
+**Recommendation:** Validate that a choice exists before indexing, or include this shape in the malformed-response handling. Add direct mocked tests of the HTTP client; existing AI tests replace `ask_openrouter` entirely and cannot catch this.
+
+### 11. HTTP server failures during login are mislabeled as bad credentials
+
+**Location:** `frontend/src/components/LoginForm.tsx:33-40`.
+
+Every non-successful HTTP response shows "Check your username and password," including HTTP 500 and 503. Fetch/network exceptions already get the more accurate unavailable message; the earlier review incorrectly grouped them with this problem.
+
+**Recommendation:** Use the credentials message for HTTP 401 and the unavailable/retry message for server failures.
+
+**Regression tests:** Distinguish HTTP 401, HTTP 503, and rejected fetch responses. This finding is based on the explicit response branch, not a live outage.
+
+## Other observations and limits
+
+- **Test setup requires a root `.env` file.** `compose.yaml:6-7` makes it mandatory, including for the isolated e2e stack. An empty file is sufficient for mocked AI tests; an API key is not inherently required. Consider an optional env file or a documented test-only setup. Do not describe this as proof that automated tests require a live key.
+- **Failed e2e setup can leave resources behind.** `frontend/tests/global-setup.ts:15-17` only returns teardown after `up --wait` succeeds. If startup partially succeeds then fails its health check, the disposable project may remain. Add cleanup on setup failure, scoped strictly to `pm-e2e`. This failure sequence was not exercised because the daemon was unavailable.
+- **Accessibility follow-up:** New-card fields rely on placeholders rather than explicit labels (`NewCardForm.tsx:27-43`). Add persistent accessible labels alongside the drag-handle work. Browser/screen-reader behavior needs verification.
+- **AI context is not size-bounded by board size.** History and operation counts are bounded, but every card is sent. Monitor this if boards grow; silently truncating cards would remove context the assistant needs and is not automatically the right fix.
+- **SQLite maintenance is lower priority for this MVP.** Read transactions deliberately acquire the write lock and seed on first access, as documented. The fixed ordering offset of 1,000,000 has a theoretical large-column collision boundary; ordinary MVP-sized boards did not demonstrate a failure. Card timestamps are updated during reordering and board timestamps are not maintained. Clarify timestamp semantics before using them for user-facing history or revisions.
+- **Production security remains outside the stated deployment model.** Signed-cookie sessions, hardcoded credentials, and no server-side session revocation are not a production authentication system. Preserve the local-only boundary rather than interpreting the passing authentication tests as production readiness.
+- **Dependency installation and AI runtime are separate concerns.** The image installs locked runtime dependencies, while the documented backend test command installs the test group at execution time. Dependency installation may require network access even though the tests themselves mock AI. Frontend builds also obtain Google fonts. The live structured-output provider path was not exercised.
+
+## Existing strengths and corrections to the previous review
+
+- `apply_operations` centralizes REST and AI writes, checks board ownership, and rolls back invalid batches. Keep this service boundary.
+- Argon2 password hashing, HTTP-only signed cookies, protected board routes, and temporary-database tests provide useful MVP safeguards. SQL mutations use bound parameters; board/chat text is rendered as React text rather than injected HTML.
+- Prefixed drag/drop IDs correctly separate colliding card and column numbers. A new wrapper abstraction is not justified solely because callers must use these existing helpers.
+- The e2e Compose project and volume are separate from normal app data. The AI browser test uses `page.route` to supply a response; it does **not** persist its column rename. The earlier assertion that this rename makes the suite order-dependent was unsupported.
+- The prior claim that card edits preserve failed drafts was incorrect: editing closes immediately and reopening overwrites the draft. Finding 5 covers the actual behavior.
+- Generic stale-closure speculation has been replaced with the independently reproduced request sequences in findings 3 and 4.
+- Import-time configuration and currently unused future-facing timestamp fields do not, by themselves, warrant refactoring in this local MVP.
+
+## Recommended remediation order
+
+1. Restrict published network access and reject stale AI commands (findings 1-2).
+2. Fix board-response reconciliation and preserve failed drafts (findings 3-6), with delayed-response and retry tests.
+3. Tighten model-output validation and restore documented Unix usability (findings 7-8).
+4. Verify and correct accessibility and error reporting (findings 9-11).
+5. Rerun the complete Docker-backed Playwright suite and native lifecycle smoke checks once Docker is available. Passing unit tests alone should not close these findings.
