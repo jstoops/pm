@@ -14,11 +14,11 @@ The schema is defined in [DATABASE_SCHEMA.json](DATABASE_SCHEMA.json). Every tab
 - `cards` belongs to a column and stores its order within that column.
 - Foreign keys cascade from user to board to column to card.
 
-The service layer will keep each `position` sequence contiguous and perform a move or reorder in one SQLite transaction. Unique ordering constraints prevent duplicate positions.
+The service layer keeps each `position` sequence contiguous and performs a move or reorder in one SQLite transaction. Unique ordering constraints prevent duplicate positions.
 
 ## Password Security
 
-Part 6 will hash the hardcoded user's password with Argon2id before inserting it into SQLite and will verify login attempts server-side. Plaintext passwords will never be stored in the database, returned in API responses, or written to logs. `users.updated_at` changes when a password or future contact information changes.
+The backend hashes the hardcoded user's password with Argon2id before inserting it into SQLite and verifies login attempts server-side. Plaintext passwords are never stored in the database, returned in API responses, or written to logs. `users.updated_at` changes when a password or future contact information changes.
 
 A password must be transiently submitted to the authentication server for verification. Sending a client-side password hash instead is not secure: that hash becomes a replayable password equivalent and does not replace server-side salting. The local MVP uses localhost HTTP. Non-local deployments must terminate TLS 1.2 or newer, prefer TLS 1.3 where supported, and set `SESSION_HTTPS_ONLY=true` so session cookies carry the `Secure` attribute.
 
@@ -30,7 +30,7 @@ On first successful login, the backend creates the hardcoded user's row with an 
 
 The API returns the existing frontend `BoardData` shape: ordered `columns`, each with `cardIds`, plus a `cards` object keyed by card ID. Database integer IDs are serialized as decimal strings at this boundary because JSON object keys and the current frontend record type are strings; the SQLite schema itself contains no text primary or foreign keys.
 
-## Required Part 6 Security Tests
+## Security Tests
 
 - Create a user and assert the stored `password_hash` verifies the password while differing from the plaintext value.
 - Query the database and assert the plaintext password is absent from all persisted user data.
@@ -40,4 +40,4 @@ The API returns the existing frontend `BoardData` shape: ordered `columns`, each
 
 ## Out of Scope
 
-Part 6 uses schema creation on startup/access rather than a migration framework. Future schema changes must add explicit migrations before modifying the live schema.
+The backend uses idempotent schema creation on access rather than a migration framework. Future schema changes must add explicit migrations before modifying the live schema.

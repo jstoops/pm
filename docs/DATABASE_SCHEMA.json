@@ -179,7 +179,7 @@
       "Review",
       "Done"
     ],
-    "creation_rule": "Create the user and its board with these five ordered columns atomically when the hardcoded user first accesses board data."
+    "creation_rule": "Create the hardcoded user on first successful login. Create its board, these five ordered columns, and the demo cards atomically when the user first accesses board data."
   },
   "api_board_shape": {
     "columns": [

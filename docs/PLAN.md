@@ -74,7 +74,7 @@
 - [x] Gate board routes and board API access behind authentication.
 - [x] Add a login view matching the existing visual language.
 - [x] Add logout and return the user to the login view.
-- [x] Preserve Kanban data in memory for the authenticated browser session.
+- [x] Preserve Kanban data for the authenticated browser session (originally in memory; superseded by SQLite persistence in Part 6).
 
 ### Tests
 
@@ -211,3 +211,7 @@
 - A signed-in user can hold a chat conversation from the board workspace.
 - Valid AI changes are visible on the board immediately after the response.
 - The completed application runs locally in Docker and all automated checks pass without live AI calls.
+
+## Post-Part 10 Changes
+
+- [x] Replace the card "remove" text control with a trash icon.
