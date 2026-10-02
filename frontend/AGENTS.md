@@ -5,8 +5,8 @@
 This directory contains the static-exported Kanban frontend. It uses Next.js 16, React 19, TypeScript, Tailwind CSS 4, and `@dnd-kit` for sortable drag and drop. It has a server-managed login flow and loads the board from the authenticated backend API.
 
 - `src/app/page.tsx` renders `KanbanBoard` at `/`.
-- `src/components/KanbanBoard.tsx` owns the loaded board view state, API-backed mutations, loading/error recovery, and drag/drop orchestration (pointer and keyboard).
-- `src/components/KanbanColumn.tsx` renders a fixed board column, inline title input, droppable region, and new-card form.
+- `src/components/KanbanBoard.tsx` owns the loaded board view state, API-backed mutations, loading/error recovery, and drag/drop orchestration (pointer and keyboard). It renders a full-viewport shell on large screens: a navy top bar, columns that share the available width (scrolling horizontally only when they no longer fit), and the assistant panel, which the top bar toggle can hide to give the board the full width.
+- `src/components/KanbanColumn.tsx` renders a fixed board column, inline title input, droppable region, and new-card form. Each column position has a stage icon and accent color from the project palette (`columnStyles`), so the style stays with the position when a column is renamed.
 - `src/components/KanbanCard.tsx` renders sortable cards with inline edit (title and details) and delete controls. Dragging is disabled while a card is being edited.
 - `src/components/KanbanCardPreview.tsx` is used for the drag overlay.
 - `src/components/NewCardForm.tsx` collects a title and optional details for a new card.

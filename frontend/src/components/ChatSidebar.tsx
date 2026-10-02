@@ -1,6 +1,13 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import {
+  CircleAlert,
+  LoaderCircle,
+  MessageSquareText,
+  SendHorizontal,
+  Sparkles,
+} from "lucide-react";
 import { redirectIfUnauthorized } from "@/lib/api";
 import type { BoardData } from "@/lib/kanban";
 
@@ -63,46 +70,67 @@ export const ChatSidebar = ({ onBoardUpdate }: ChatSidebarProps) => {
   return (
     <aside
       aria-label="Board assistant"
-      className="flex min-h-[480px] flex-col border border-[var(--stroke)] bg-white p-5 shadow-[var(--shadow)] lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)]"
+      className="flex h-full min-h-[480px] flex-col bg-white lg:min-h-0"
       data-testid="ai-chat-sidebar"
     >
-      <div className="border-b border-[var(--stroke)] pb-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--primary-blue)]">
-          Board Assistant
-        </p>
-        <h2 className="mt-2 font-display text-xl font-semibold text-[var(--navy-dark)]">
-          Plan in context
-        </h2>
+      <div className="flex items-center gap-3 border-b border-[var(--stroke)] px-5 py-4">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary-purple)]/10 text-[var(--secondary-purple)]">
+          <Sparkles aria-hidden="true" size={18} strokeWidth={2} />
+        </span>
+        <div>
+          <h2 className="font-display text-base font-semibold leading-5 text-[var(--navy-dark)]">
+            Board Assistant
+          </h2>
+          <p className="text-xs text-[var(--text-muted)]">Plan and update cards in context</p>
+        </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-5" aria-live="polite">
+      <div
+        className="thin-scrollbar flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-5"
+        aria-live="polite"
+      >
         {messages.length === 0 ? (
-          <p className="text-sm leading-6 text-[var(--gray-text)]">
-            Ask about priorities or request a board update.
-          </p>
+          <div className="m-auto max-w-[240px] text-center">
+            <MessageSquareText
+              aria-hidden="true"
+              size={28}
+              strokeWidth={1.5}
+              className="mx-auto text-[var(--stroke-strong)]"
+            />
+            <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
+              Ask about priorities or request a board update.
+            </p>
+          </div>
         ) : (
           messages.map((chatMessage, index) => (
             <div
               key={`${chatMessage.role}-${index}`}
               className={
                 chatMessage.role === "user"
-                  ? "border-l-2 border-[var(--primary-blue)] bg-[var(--surface)] px-3 py-2 text-sm leading-6 text-[var(--navy-dark)]"
-                  : "border-l-2 border-[var(--accent-yellow)] px-3 py-2 text-sm leading-6 text-[var(--navy-dark)]"
+                  ? "ml-8 self-end rounded-2xl rounded-br-sm bg-[var(--navy-dark)] px-3.5 py-2 text-sm leading-6 text-white"
+                  : "mr-8 self-start rounded-2xl rounded-bl-sm bg-[var(--surface-muted)] px-3.5 py-2 text-sm leading-6 text-[var(--navy-dark)]"
               }
             >
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--gray-text)]">
-                {chatMessage.role === "user" ? "You" : "Assistant"}
-              </p>
-              <p>{chatMessage.content}</p>
+              <p className="sr-only">{chatMessage.role === "user" ? "You" : "Assistant"}</p>
+              <p className="whitespace-pre-wrap break-words">{chatMessage.content}</p>
             </div>
           ))
         )}
-        {isSending && <p className="text-sm text-[var(--gray-text)]">Thinking...</p>}
+        {isSending && (
+          <p className="flex items-center gap-2 self-start text-sm text-[var(--text-muted)]">
+            <LoaderCircle aria-hidden="true" size={14} className="animate-spin" />
+            Thinking...
+          </p>
+        )}
       </div>
 
-      <form className="border-t border-[var(--stroke)] pt-4" onSubmit={submit}>
+      <form className="border-t border-[var(--stroke)] px-5 py-4" onSubmit={submit}>
         {error && (
-          <p className="mb-3 text-sm font-semibold text-[var(--secondary-purple)]" role="alert">
+          <p
+            className="mb-3 flex items-start gap-2 text-sm font-medium text-[var(--secondary-purple)]"
+            role="alert"
+          >
+            <CircleAlert aria-hidden="true" size={16} className="mt-0.5 shrink-0" />
             {error}
           </p>
         )}
@@ -116,13 +144,14 @@ export const ChatSidebar = ({ onBoardUpdate }: ChatSidebarProps) => {
           placeholder="Ask about this board"
           rows={3}
           disabled={isSending}
-          className="w-full resize-none border border-[var(--stroke)] bg-[var(--surface)] px-3 py-3 text-sm leading-5 text-[var(--navy-dark)] outline-none transition placeholder:text-[var(--gray-text)] focus:border-[var(--primary-blue)] disabled:cursor-wait"
+          className="w-full resize-none rounded-lg border border-[var(--stroke-strong)] bg-[var(--surface)] px-3 py-2.5 text-sm leading-5 text-[var(--navy-dark)] outline-none transition placeholder:text-[var(--gray-text)] focus:border-[var(--primary-blue)] focus:bg-white focus:ring-2 focus:ring-[var(--primary-blue)]/20 disabled:cursor-wait"
         />
         <button
           type="submit"
           disabled={isSending || !message.trim()}
-          className="mt-3 w-full bg-[var(--secondary-purple)] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[var(--navy-dark)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--secondary-purple)] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
+          <SendHorizontal aria-hidden="true" size={16} strokeWidth={2} />
           {isSending ? "Sending..." : "Send message"}
         </button>
       </form>

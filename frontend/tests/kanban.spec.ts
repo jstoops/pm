@@ -263,11 +263,13 @@ test.describe("authenticated board", () => {
         .filter({ has: page.getByRole("heading", { name: "Alpha", exact: true }) });
       const dragId = (await card.getAttribute("data-testid"))!.replace("card-", "card:");
       await card.focus();
-      // dnd-kit announces each keyboard drag step. Waiting for them keeps key
-      // presses from arriving before the sensor has attached its listener.
+      // dnd-kit announces each keyboard drag step. The keyboard sensor attaches
+      // its keydown listener in a setTimeout after the pickup announcement, so
+      // one more page timer turn guarantees ArrowDown is not dropped.
       const announcement = page.getByRole("status");
       await page.keyboard.press("Space");
       await expect(announcement).toContainText(`over droppable area ${dragId}.`);
+      await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
       await page.keyboard.press("ArrowDown");
       await expect(announcement).not.toContainText(`over droppable area ${dragId}.`);
       await page.keyboard.press("Space");

@@ -14,6 +14,16 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import clsx from "clsx";
+import {
+  CircleAlert,
+  LoaderCircle,
+  LogOut,
+  PanelRightClose,
+  PanelRightOpen,
+  RotateCw,
+  SquareKanban,
+} from "lucide-react";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
@@ -87,6 +97,7 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(true);
   const boardChangeId = useRef(0);
   const boardChangeQueue = useRef(Promise.resolve());
 
@@ -222,7 +233,12 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
 
   if (!board) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-sm font-semibold text-[var(--gray-text)]">
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-sm font-medium text-[var(--text-muted)]">
+        {error ? (
+          <CircleAlert aria-hidden="true" size={28} className="text-[var(--secondary-purple)]" />
+        ) : (
+          <LoaderCircle aria-hidden="true" size={28} className="animate-spin text-[var(--primary-blue)]" />
+        )}
         <p>{error || "Loading board..."}</p>
         {error && (
           <button
@@ -231,8 +247,9 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
               setError("");
               setLoadAttempt((attempt) => attempt + 1);
             }}
-            className="border border-[var(--stroke)] bg-white px-4 py-3 text-sm font-semibold text-[var(--navy-dark)] transition hover:border-[var(--secondary-purple)] hover:text-[var(--secondary-purple)]"
+            className="flex items-center gap-2 rounded-lg border border-[var(--stroke-strong)] bg-white px-4 py-2 text-sm font-semibold text-[var(--navy-dark)] shadow-[var(--shadow-sm)] transition hover:border-[var(--primary-blue)] hover:text-[var(--primary-blue)]"
           >
+            <RotateCw aria-hidden="true" size={15} />
             Retry
           </button>
         )}
@@ -240,100 +257,97 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
     );
   }
 
+  const cardCount = Object.keys(board.cards).length;
+  const headerButtonClass =
+    "flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white";
+
   return (
-    <div className="relative overflow-hidden">
-      <div className="pointer-events-none absolute left-0 top-0 h-[420px] w-[420px] -translate-x-1/3 -translate-y-1/3 rounded-full bg-[radial-gradient(circle,_rgba(32,157,215,0.25)_0%,_rgba(32,157,215,0.05)_55%,_transparent_70%)]" />
-      <div className="pointer-events-none absolute bottom-0 right-0 h-[520px] w-[520px] translate-x-1/4 translate-y-1/4 rounded-full bg-[radial-gradient(circle,_rgba(117,57,145,0.18)_0%,_rgba(117,57,145,0.05)_55%,_transparent_75%)]" />
-
-      <main className="relative mx-auto flex min-h-screen max-w-[1500px] flex-col gap-10 px-6 pb-16 pt-12">
-        {error && (
-          <p className="text-sm font-semibold text-[var(--secondary-purple)]" role="alert">
-            {error}
+    <div className="flex min-h-screen flex-col lg:h-screen">
+      <header className="flex shrink-0 items-center gap-4 bg-[var(--navy-dark)] px-4 py-3 sm:px-6">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-yellow)] text-[var(--navy-dark)]">
+          <SquareKanban aria-hidden="true" size={20} strokeWidth={2.25} />
+        </span>
+        <div className="min-w-0">
+          <h1 className="font-display text-lg font-semibold leading-6 text-white">
+            Kanban Studio
+          </h1>
+          <p className="truncate text-xs text-white/60">
+            {cardCount} {cardCount === 1 ? "card" : "cards"} across {board.columns.length} columns
           </p>
-        )}
-        <header className="flex flex-col gap-6 rounded-[32px] border border-[var(--stroke)] bg-white/80 p-8 shadow-[var(--shadow)] backdrop-blur">
-          <div className="flex flex-wrap items-start justify-between gap-6">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[var(--gray-text)]">
-                Single Board Kanban
-              </p>
-              <h1 className="mt-3 font-display text-4xl font-semibold text-[var(--navy-dark)]">
-                Kanban Studio
-              </h1>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-[var(--gray-text)]">
-                Keep momentum visible. Rename columns, drag cards between stages,
-                and capture quick notes without getting buried in settings.
-              </p>
-            </div>
-            <div className="flex items-start gap-3">
-              <div className="rounded-2xl border border-[var(--stroke)] bg-[var(--surface)] px-5 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[var(--gray-text)]">
-                  Focus
-                </p>
-                <p className="mt-2 text-lg font-semibold text-[var(--primary-blue)]">
-                  One board. Five columns. Zero clutter.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void onLogout()}
-                className="border border-[var(--stroke)] bg-white px-4 py-3 text-sm font-semibold text-[var(--navy-dark)] transition hover:border-[var(--secondary-purple)] hover:text-[var(--secondary-purple)]"
-              >
-                Log out
-              </button>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            {board.columns.map((column) => (
-              <div
-                key={column.id}
-                className="flex items-center gap-2 rounded-full border border-[var(--stroke)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--navy-dark)]"
-              >
-                <span className="h-2 w-2 rounded-full bg-[var(--accent-yellow)]" />
-                {column.title}
-              </div>
-            ))}
-          </div>
-        </header>
+        </div>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setIsAssistantOpen((open) => !open)}
+            aria-pressed={isAssistantOpen}
+            aria-label="Toggle assistant"
+            className={headerButtonClass}
+          >
+            {isAssistantOpen ? (
+              <PanelRightClose aria-hidden="true" size={17} />
+            ) : (
+              <PanelRightOpen aria-hidden="true" size={17} />
+            )}
+            <span className="hidden sm:inline">Assistant</span>
+          </button>
+          <button type="button" onClick={() => void onLogout()} className={headerButtonClass}>
+            <LogOut aria-hidden="true" size={17} />
+            Log out
+          </button>
+        </div>
+      </header>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={collisionDetection}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
+      {error && (
+        <p
+          className="flex shrink-0 items-center gap-2 border-b border-[var(--secondary-purple)]/20 bg-[var(--secondary-purple)]/10 px-6 py-2 text-sm font-medium text-[var(--secondary-purple)]"
+          role="alert"
         >
-          <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
-            <div className="min-w-0 overflow-x-auto pb-2">
-              <div className="grid min-w-[1120px] grid-cols-5 gap-6">
-                {board.columns.map((column) => (
-                  <KanbanColumn
-                    key={column.id}
-                    column={column}
-                    cards={column.cardIds.map((cardId) => board.cards[cardId])}
-                    onRename={handleRenameColumn}
-                    onAddCard={handleAddCard}
-                    onDeleteCard={handleDeleteCard}
-                    onUpdateCard={handleUpdateCard}
-                  />
-                ))}
-              </div>
+          <CircleAlert aria-hidden="true" size={16} className="shrink-0" />
+          {error}
+        </p>
+      )}
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={collisionDetection}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="flex flex-1 flex-col lg:min-h-0 lg:flex-row">
+          <main className="thin-scrollbar min-w-0 flex-1 overflow-x-auto p-4 lg:min-h-0 2xl:p-6">
+            <div className="grid h-full auto-cols-[minmax(240px,1fr)] grid-flow-col gap-3 lg:auto-cols-[minmax(170px,1fr)] 2xl:gap-4">
+              {board.columns.map((column, index) => (
+                <KanbanColumn
+                  key={column.id}
+                  column={column}
+                  index={index}
+                  cards={column.cardIds.map((cardId) => board.cards[cardId])}
+                  onRename={handleRenameColumn}
+                  onAddCard={handleAddCard}
+                  onDeleteCard={handleDeleteCard}
+                  onUpdateCard={handleUpdateCard}
+                />
+              ))}
             </div>
+          </main>
+          <div
+            className={clsx(
+              "shrink-0 border-t border-[var(--stroke)] lg:w-[320px] lg:border-l 2xl:w-[380px] lg:border-t-0",
+              !isAssistantOpen && "hidden"
+            )}
+          >
             <ChatSidebar
               onBoardUpdate={(nextBoard) => {
                 setError("");
                 setBoard(nextBoard);
               }}
             />
-          </section>
-          <DragOverlay>
-            {activeCard ? (
-              <div className="w-[260px]">
-                <KanbanCardPreview card={activeCard} />
-              </div>
-            ) : null}
-          </DragOverlay>
-        </DndContext>
-      </main>
+          </div>
+        </div>
+        <DragOverlay>
+          {activeCard ? <KanbanCardPreview card={activeCard} /> : null}
+        </DragOverlay>
+      </DndContext>
     </div>
   );
 };
