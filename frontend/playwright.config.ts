@@ -4,8 +4,8 @@ import { E2E_BASE_URL } from "./tests/global-setup";
 export default defineConfig({
   testDir: "./tests",
   globalSetup: "./tests/global-setup.ts",
-  // Every test signs in as the same user and shares one board.
-  workers: 1,
+  // Each test registers its own user, so tests never share board data.
+  fullyParallel: true,
   timeout: 60_000,
   expect: {
     timeout: 10_000,

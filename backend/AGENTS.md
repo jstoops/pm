@@ -2,27 +2,29 @@
 
 ## Current Application
 
-The backend is a minimal FastAPI service packaged by the root Docker image. It is managed with `uv`; `pyproject.toml` contains runtime dependencies and the `test` dependency group, and `uv.lock` pins every version (the image installs with `uv sync --locked`).
+The backend is a FastAPI service packaged by the root Docker image. It is managed with `uv`; `pyproject.toml` contains runtime dependencies and the `test` dependency group, and `uv.lock` pins every version (the image installs with `uv sync --locked`).
 
-- `app/main.py` creates the FastAPI application. Its lifespan handler creates the SQLite schema once at startup.
-- `GET /` serves the login export until the user has an authenticated session, then serves the board export. The Docker build replaces `app/static/` with the frontend `out/` directory.
+- `app/main.py` creates the FastAPI application and every route. Its lifespan handler runs `initialize_database()` once at startup.
+- Pages: `GET /` serves the login export until the user has a session, then the workspace export. `/login` and `/register` redirect signed-in users to `/`; `/account` redirects signed-out users to `/login`. The Docker build replaces `app/static/` with the frontend `out/` directory.
 - `GET /api/health` returns `{ "status": "ok" }` for container and service checks.
-- `POST /api/auth/login` accepts only `user` / `password` and establishes a signed, HTTP-only session cookie.
-- `GET /api/auth/session` reports whether the request is authenticated; `POST /api/auth/logout` clears the session.
-- `GET /api/board` returns the authenticated user's persisted board. The column/card routes under `/api/board` rename, create, update, delete, and move board data, returning the full board, or 404 when a card or column is not on the user's board.
-- `POST /api/chat` sends the authenticated user's bounded conversation and current board to OpenRouter, validates the versioned response, and atomically applies valid board operations.
-- `app/operations.py` defines the board operation models (`RenameColumn`, `CreateCard`, `UpdateCard`, `MoveCard`, `DeleteCard`) and the title/details constraints. Titles are stripped and must be non-empty.
-- `app/database.py` owns SQLite initialization, Argon2id verification, seed data, and `apply_operations`, the single implementation of every board change. REST routes and the AI path both call it. Every database call runs in `transaction()`, which takes the SQLite write lock (`BEGIN IMMEDIATE`) and commits or rolls back as a unit.
+- Auth: `POST /api/auth/register` (409 if the username is taken), `POST /api/auth/login`, `POST /api/auth/logout`, and `GET /api/auth/session` (`authenticated` plus `username`). Sessions are signed, HTTP-only cookies storing `user_id`; `require_authenticated` rejects sessions whose account no longer exists.
+- Account: `GET /api/account`, `POST /api/account/password`, and `POST /api/account/delete`; the last two require the current password (403 otherwise).
+- Boards: `GET`/`POST /api/boards`, and `GET`/`PATCH`/`DELETE /api/boards/{id}`. Column and card routes live under `/api/boards/{id}/columns` and `/api/boards/{id}/cards`. Every mutation returns the full board; a board, column or card outside the user's boards is a 404.
+- `POST /api/boards/{id}/chat` sends the bounded conversation and that board to OpenRouter, validates the versioned response, and atomically applies valid board operations.
+- `app/operations.py` defines the board operation models (`UpdateBoard`, `CreateColumn`, `RenameColumn`, `MoveColumn`, `DeleteColumn`, `CreateCard`, `UpdateCard`, `MoveCard`, `DeleteCard`) and the name/title/details constraints. Names and titles are stripped and must be non-empty.
+- `app/database.py` owns schema migrations (`MIGRATIONS`, tracked with `PRAGMA user_version`), Argon2id hashing, users, board creation and seeding, and `apply_operations`, the single implementation of every change inside a board. REST routes and the AI path both call it. Every database call runs in `transaction()`, which takes the SQLite write lock (`BEGIN IMMEDIATE`) and commits or rolls back as a unit.
 - `app/ai.py` owns the AI response schema, OpenRouter prompt construction (with a JSON-schema `response_format`), and validated board-command orchestration.
-- `tests/` contains backend API and static-root tests using HTTPX ASGI transport. `tests/conftest.py` gives every test its own temporary SQLite database.
+- `tests/` uses HTTPX ASGI transport. `tests/conftest.py` gives every test its own temporary SQLite database and provides `client`, `new_client()` (a separate browser session), `login`, `register` and `first_board` helpers.
 
 ## Commands
 
 Run backend tests through Docker because `uv` is installed in the container:
 
 ```powershell
-docker compose run --rm app uv run --group test pytest
+docker compose run --rm app uv run --group test pytest --cov
 ```
+
+`--cov` enforces the 90% coverage gate configured in `pyproject.toml`; leave it off when running a single test.
 
 The root start scripts build and start the application at `http://localhost:8000` by default.
 
@@ -34,4 +36,5 @@ The root start scripts build and start the application at `http://localhost:8000
 - Keep the root static mount after API route definitions so `/api` routes are never handled as static files.
 - Keep board routes and future board API endpoints behind `require_authenticated` (use the `UserId` dependency).
 - Add new board changes as an operation model in `app/operations.py` and a case in `apply_operations`, not as separate SQL in a route.
+- Change the schema only by appending to `MIGRATIONS`; never edit a migration that has shipped. Add a test that upgrades a database from the previous version.
 - Local development uses HTTP. Non-local deployments must terminate TLS 1.2+, prefer TLS 1.3, and set `SESSION_HTTPS_ONLY=true`.

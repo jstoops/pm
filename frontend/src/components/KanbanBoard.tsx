@@ -18,20 +18,24 @@ import clsx from "clsx";
 import {
   CircleAlert,
   LoaderCircle,
-  LogOut,
   PanelRightClose,
   PanelRightOpen,
   RotateCw,
-  SquareKanban,
+  Trash2,
 } from "lucide-react";
+import { AddColumnForm } from "@/components/AddColumnForm";
 import { ChatSidebar } from "@/components/ChatSidebar";
+import { InlineTitle } from "@/components/InlineTitle";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
-import { redirectIfUnauthorized } from "@/lib/api";
+import { apiRequest, jsonRequest } from "@/lib/api";
 import { moveCard, parseDragId, type BoardData } from "@/lib/kanban";
 
 type KanbanBoardProps = {
-  onLogout?: () => void | Promise<void>;
+  boardId: string;
+  /** Called with every board the server returns after a change, so the workspace can refresh its list. */
+  onBoardChange?: (board: BoardData) => void;
+  onBoardDeleted?: () => void;
 };
 
 /**
@@ -76,23 +80,7 @@ const collisionDetection: CollisionDetection = (args) => {
   return [{ id: cardBelowPointer?.id ?? column.id }];
 };
 
-const boardRequest = async (url: string, init?: RequestInit): Promise<BoardData> => {
-  const response = await fetch(url, init);
-  redirectIfUnauthorized(response);
-  if (!response.ok) {
-    throw new Error("Unable to save board changes.");
-  }
-  return response.json() as Promise<BoardData>;
-};
-
-const logout = async () => {
-  const response = await fetch("/api/auth/logout", { method: "POST" });
-  if (response.ok) {
-    window.location.assign("/");
-  }
-};
-
-export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
+export const KanbanBoard = ({ boardId, onBoardChange, onBoardDeleted }: KanbanBoardProps) => {
   const [board, setBoard] = useState<BoardData | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -100,11 +88,12 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
   const [isAssistantOpen, setIsAssistantOpen] = useState(true);
   const boardChangeId = useRef(0);
   const boardChangeQueue = useRef(Promise.resolve());
+  const boardUrl = `/api/boards/${boardId}`;
 
   useEffect(() => {
     let isCurrent = true;
 
-    void boardRequest("/api/board")
+    void apiRequest<BoardData>(`/api/boards/${boardId}`)
       .then((nextBoard) => {
         if (isCurrent) {
           setBoard(nextBoard);
@@ -119,7 +108,7 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
     return () => {
       isCurrent = false;
     };
-  }, [loadAttempt]);
+  }, [boardId, loadAttempt]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -130,14 +119,21 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
     })
   );
 
+  const showServerBoard = (nextBoard: BoardData) => {
+    setBoard(nextBoard);
+    onBoardChange?.(nextBoard);
+  };
+
   const applyBoardChange = async (
-    url: string,
+    path: string,
     init: RequestInit,
     optimisticBoard?: BoardData
   ) => {
     const previousBoard = board;
     const changeId = ++boardChangeId.current;
-    const request = boardChangeQueue.current.then(() => boardRequest(url, init));
+    const request = boardChangeQueue.current.then(() =>
+      apiRequest<BoardData>(`${boardUrl}${path}`, init)
+    );
     boardChangeQueue.current = request.then(
       () => undefined,
       () => undefined
@@ -150,7 +146,7 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
       }
       const nextBoard = await request;
       if (changeId === boardChangeId.current) {
-        setBoard(nextBoard);
+        showServerBoard(nextBoard);
       }
     } catch {
       if (changeId !== boardChangeId.current) {
@@ -191,49 +187,76 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
       return;
     }
 
-    void applyBoardChange(`/api/board/cards/${cardId}/move`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    void applyBoardChange(
+      `/cards/${cardId}/move`,
+      jsonRequest("POST", {
         column_id: Number(destination.id),
         position: destination.cardIds.indexOf(cardId),
       }),
-    }, { ...board, columns });
+      { ...board, columns }
+    );
+  };
+
+  const handleRenameBoard = (name: string) => {
+    void applyBoardChange("", jsonRequest("PATCH", { name }));
+  };
+
+  const handleDeleteBoard = async () => {
+    if (!board || !window.confirm(`Delete "${board.name}" and all of its cards?`)) {
+      return;
+    }
+    try {
+      await apiRequest<void>(boardUrl, { method: "DELETE" });
+      onBoardDeleted?.();
+    } catch {
+      setError("Unable to delete the board. Please try again.");
+    }
+  };
+
+  const handleAddColumn = (title: string) => {
+    void applyBoardChange("/columns", jsonRequest("POST", { title }));
   };
 
   const handleRenameColumn = (columnId: string, title: string) => {
-    void applyBoardChange(`/api/board/columns/${columnId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title }),
-    });
+    void applyBoardChange(`/columns/${columnId}`, jsonRequest("PATCH", { title }));
+  };
+
+  const handleMoveColumn = (columnId: string, position: number) => {
+    void applyBoardChange(`/columns/${columnId}/move`, jsonRequest("POST", { position }));
+  };
+
+  const handleDeleteColumn = (columnId: string) => {
+    const column = board?.columns.find((item) => item.id === columnId);
+    if (
+      column &&
+      column.cardIds.length > 0 &&
+      !window.confirm(`Delete "${column.title}" and its ${column.cardIds.length} cards?`)
+    ) {
+      return;
+    }
+    void applyBoardChange(`/columns/${columnId}`, { method: "DELETE" });
   };
 
   const handleAddCard = (columnId: string, title: string, details: string) => {
-    void applyBoardChange("/api/board/cards", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ column_id: Number(columnId), title, details }),
-    });
+    void applyBoardChange(
+      "/cards",
+      jsonRequest("POST", { column_id: Number(columnId), title, details })
+    );
   };
 
   const handleUpdateCard = (cardId: string, title: string, details: string) => {
-    void applyBoardChange(`/api/board/cards/${cardId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, details }),
-    });
+    void applyBoardChange(`/cards/${cardId}`, jsonRequest("PATCH", { title, details }));
   };
 
   const handleDeleteCard = (cardId: string) => {
-    void applyBoardChange(`/api/board/cards/${cardId}`, { method: "DELETE" });
+    void applyBoardChange(`/cards/${cardId}`, { method: "DELETE" });
   };
 
   const activeCard = activeCardId ? board?.cards[activeCardId] : null;
 
   if (!board) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-sm font-medium text-[var(--text-muted)]">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-sm font-medium text-[var(--text-muted)]">
         {error ? (
           <CircleAlert aria-hidden="true" size={28} className="text-[var(--secondary-purple)]" />
         ) : (
@@ -253,35 +276,37 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
             Retry
           </button>
         )}
-      </main>
+      </div>
     );
   }
 
   const cardCount = Object.keys(board.cards).length;
-  const headerButtonClass =
-    "flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-white/80 transition hover:bg-white/10 hover:text-white";
+  const toolbarButtonClass =
+    "flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--navy-dark)]";
 
   return (
-    <div className="flex min-h-screen flex-col lg:h-screen">
-      <header className="flex shrink-0 items-center gap-4 bg-[var(--navy-dark)] px-4 py-3 sm:px-6">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-yellow)] text-[var(--navy-dark)]">
-          <SquareKanban aria-hidden="true" size={20} strokeWidth={2.25} />
-        </span>
-        <div className="min-w-0">
-          <h1 className="font-display text-lg font-semibold leading-6 text-white">
-            Kanban Studio
-          </h1>
-          <p className="truncate text-xs text-white/60">
-            {cardCount} {cardCount === 1 ? "card" : "cards"} across {board.columns.length} columns
+    <div className="flex min-w-0 flex-1 flex-col lg:min-h-0">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-b border-[var(--stroke)] bg-white px-4 py-2 sm:px-6">
+        <div className="min-w-0 flex-1">
+          <InlineTitle
+            key={board.name}
+            initialTitle={board.name}
+            onRename={handleRenameBoard}
+            label="Board name"
+            className="w-full max-w-md font-display text-lg"
+          />
+          <p className="px-1 text-xs text-[var(--text-muted)]">
+            {cardCount} {cardCount === 1 ? "card" : "cards"} across {board.columns.length}{" "}
+            {board.columns.length === 1 ? "column" : "columns"}
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => setIsAssistantOpen((open) => !open)}
             aria-pressed={isAssistantOpen}
             aria-label="Toggle assistant"
-            className={headerButtonClass}
+            className={toolbarButtonClass}
           >
             {isAssistantOpen ? (
               <PanelRightClose aria-hidden="true" size={17} />
@@ -290,12 +315,17 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
             )}
             <span className="hidden sm:inline">Assistant</span>
           </button>
-          <button type="button" onClick={() => void onLogout()} className={headerButtonClass}>
-            <LogOut aria-hidden="true" size={17} />
-            Log out
+          <button
+            type="button"
+            onClick={() => void handleDeleteBoard()}
+            aria-label="Delete board"
+            className={clsx(toolbarButtonClass, "hover:text-[var(--secondary-purple)]")}
+          >
+            <Trash2 aria-hidden="true" size={16} />
+            <span className="hidden sm:inline">Delete board</span>
           </button>
         </div>
-      </header>
+      </div>
 
       {error && (
         <p
@@ -321,13 +351,17 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
                   key={column.id}
                   column={column}
                   index={index}
+                  columnCount={board.columns.length}
                   cards={column.cardIds.map((cardId) => board.cards[cardId])}
                   onRename={handleRenameColumn}
+                  onMove={handleMoveColumn}
+                  onDelete={handleDeleteColumn}
                   onAddCard={handleAddCard}
                   onDeleteCard={handleDeleteCard}
                   onUpdateCard={handleUpdateCard}
                 />
               ))}
+              <AddColumnForm onAdd={handleAddColumn} />
             </div>
           </main>
           <div
@@ -337,9 +371,10 @@ export const KanbanBoard = ({ onLogout = logout }: KanbanBoardProps) => {
             )}
           >
             <ChatSidebar
+              boardId={boardId}
               onBoardUpdate={(nextBoard) => {
                 setError("");
-                setBoard(nextBoard);
+                showServerBoard(nextBoard);
               }}
             />
           </div>

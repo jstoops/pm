@@ -22,10 +22,11 @@ type ChatResponse = {
 };
 
 type ChatSidebarProps = {
+  boardId: string;
   onBoardUpdate: (board: BoardData) => void;
 };
 
-export const ChatSidebar = ({ onBoardUpdate }: ChatSidebarProps) => {
+export const ChatSidebar = ({ boardId, onBoardUpdate }: ChatSidebarProps) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -41,7 +42,7 @@ export const ChatSidebar = ({ onBoardUpdate }: ChatSidebarProps) => {
     setError("");
     setIsSending(true);
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(`/api/boards/${boardId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: question, history: messages.slice(-12) }),

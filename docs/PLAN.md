@@ -216,3 +216,30 @@
 
 - [x] Replace the card "remove" text control with a trash icon.
 - [x] Remediate every finding in `docs/code_review.md` (card editing, isolated e2e stack, title validation, single board-change service, expired-session redirect, structured AI output, locked dependencies, keyboard drag and drop, and cleanup).
+
+## Part 11: Accounts and Multiple Boards
+
+- [x] Versioned schema migrations (`PRAGMA user_version`) that upgrade existing single-board databases without data loss.
+- [x] Self-service registration (lowercase usernames, 8+ character passwords), with a seeded first board. The demo `user` / `password` account is created at startup.
+- [x] Account page: profile summary, password change, and account deletion (both require the current password). Sessions of a deleted account are rejected.
+- [x] Any number of named boards per user: create, list (with card counts), rename, describe, delete.
+- [x] Columns can be added, renamed, moved left/right, and deleted (with their cards, after confirmation).
+- [x] Board-scoped REST routes under `/api/boards/{id}` and AI chat at `/api/boards/{id}/chat`; the AI can also manage the board name and columns.
+- [x] Workspace UI: board sidebar, remembered last board, board toolbar (rename, delete, assistant toggle), register and account pages.
+
+### Tests
+
+- [x] Backend: auth/account, boards API, cross-user isolation on every route and through the AI, migration from a legacy database, transaction rollback, OpenRouter client errors. Coverage gate 90% (`pytest --cov`).
+- [x] Frontend unit: Workspace, KanbanBoard (against an in-memory fake API), RegisterForm, AccountSettings, API helper. Coverage gate in `vitest.config.ts`.
+- [x] Playwright: every test registers its own user and the suite runs in parallel; covers registration, multiple boards, column management, password change, and account deletion.
+
+## Roadmap
+
+Later parts, in order. Each follows the same rules: one operation model per board change, tests at every layer, docs kept accurate.
+
+- Part 12: Card metadata: priority, due date, and labels, editable in the UI and by the AI; overdue cards highlighted.
+- Part 13: Board search and filters (text, priority, label, due), applied client-side to the loaded board.
+- Part 14: Card detail view with a checklist and comments.
+- Part 15: Board activity history (who changed what, when) recorded inside `apply_operations`.
+- Part 16: Security hardening: login rate limiting and ending other sessions on password change.
+- Raise the frontend branch coverage gate (currently 75%) once drag-and-drop handlers have unit coverage.

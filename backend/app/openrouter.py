@@ -40,7 +40,7 @@ def ask_openrouter(
         raise OpenRouterError(
             f"OpenRouter returned HTTP {error.response.status_code}."
         ) from error
-    except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+    except (httpx.HTTPError, LookupError, TypeError, ValueError) as error:
         raise OpenRouterError("OpenRouter returned an invalid response.") from error
 
     if not isinstance(content, str) or not content.strip():

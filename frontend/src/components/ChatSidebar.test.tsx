@@ -6,6 +6,9 @@ import { ChatSidebar } from "./ChatSidebar";
 import type { BoardData } from "../lib/kanban";
 
 const updatedBoard: BoardData = {
+  id: "7",
+  name: "Board",
+  description: "",
   columns: [{ id: "1", title: "Ideas", cardIds: [] }],
   cards: {},
 };
@@ -25,14 +28,14 @@ describe("ChatSidebar", () => {
       )
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(<ChatSidebar onBoardUpdate={onBoardUpdate} />);
+    render(<ChatSidebar boardId="7" onBoardUpdate={onBoardUpdate} />);
 
     await user.type(screen.getByLabelText("Message the board assistant"), "Rename Backlog");
     await user.click(screen.getByRole("button", { name: "Send message" }));
 
     await screen.findByText("I updated the board.");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/chat",
+      "/api/boards/7/chat",
       expect.objectContaining({ method: "POST" })
     );
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
@@ -45,7 +48,7 @@ describe("ChatSidebar", () => {
   it("keeps the message available and shows an error when submission fails", async () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
-    render(<ChatSidebar onBoardUpdate={vi.fn()} />);
+    render(<ChatSidebar boardId="7" onBoardUpdate={vi.fn()} />);
 
     const input = screen.getByLabelText("Message the board assistant");
     await user.type(input, "Help me prioritize");
@@ -67,7 +70,7 @@ describe("ChatSidebar", () => {
           })
       )
     );
-    render(<ChatSidebar onBoardUpdate={vi.fn()} />);
+    render(<ChatSidebar boardId="7" onBoardUpdate={vi.fn()} />);
 
     await user.type(screen.getByLabelText("Message the board assistant"), "Help me plan");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -85,7 +88,7 @@ describe("ChatSidebar", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ assistantText: "First reply" })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ assistantText: "Second reply" })));
     vi.stubGlobal("fetch", fetchMock);
-    render(<ChatSidebar onBoardUpdate={vi.fn()} />);
+    render(<ChatSidebar boardId="7" onBoardUpdate={vi.fn()} />);
 
     const input = screen.getByLabelText("Message the board assistant");
     await user.type(input, "First question");

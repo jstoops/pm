@@ -11,9 +11,27 @@ export type Column = {
 };
 
 export type BoardData = {
+  id: string;
+  name: string;
+  description: string;
   columns: Column[];
   cards: Record<string, Card>;
 };
+
+export type BoardSummary = {
+  id: string;
+  name: string;
+  description: string;
+  cardCount: number;
+  updatedAt: string;
+};
+
+export const summarizeBoard = (board: BoardData): Pick<BoardSummary, "id" | "name" | "description" | "cardCount"> => ({
+  id: board.id,
+  name: board.name,
+  description: board.description,
+  cardCount: Object.keys(board.cards).length,
+});
 
 // Card and column database ids share one numeric namespace, so drag and drop
 // identifiers are prefixed to keep the two kinds of target apart.

@@ -8,8 +8,10 @@ const eslintConfig = defineConfig([
   {
     rules: {
       // FastAPI picks the login or board page from the session cookie, so
-      // sign-in, sign-out and expired sessions need a full page load.
+      // sign-in, sign-out, expired sessions and links between pages need a
+      // full page load.
       "@next/next/no-location-assign-relative-destination": "off",
+      "@next/next/no-html-link-for-pages": "off",
     },
   },
   // Override default ignores of eslint-config-next.
@@ -19,6 +21,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated test reports.
+    "coverage/**",
+    "playwright-report/**",
+    "test-results/**",
   ]),
 ]);
 

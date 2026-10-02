@@ -3,90 +3,76 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, vi } from "vitest";
 import { KanbanBoard } from "@/components/KanbanBoard";
 import type { BoardData } from "@/lib/kanban";
+import { installFakeApi, requests, sampleBoard } from "@/test/fakeApi";
 
-const getFirstColumn = () => screen.getAllByTestId(/column-/i)[0];
-let board: BoardData;
-
-const response = () => new Response(JSON.stringify(board), { status: 200 });
-
-const apiBoard = (): BoardData => ({
-  columns: [
-    { id: "1", title: "Backlog", cardIds: ["1", "2"] },
-    { id: "2", title: "Discovery", cardIds: [] },
-    { id: "3", title: "In Progress", cardIds: [] },
-    { id: "4", title: "Review", cardIds: [] },
-    { id: "5", title: "Done", cardIds: [] },
-  ],
-  cards: {
-    "1": { id: "1", title: "Roadmap", details: "Plan the next release." },
-    "2": { id: "2", title: "Research", details: "Collect user feedback." },
-  },
-});
+let api: ReturnType<typeof installFakeApi>;
+const columns = () => screen.getAllByTestId(/^column-/);
+const getFirstColumn = () => columns()[0];
+const columnTitles = () =>
+  columns().map((column) => (within(column).getByLabelText("Column title") as HTMLInputElement).value);
 
 beforeEach(() => {
-  board = apiBoard();
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "/api/board" && !init?.method) {
-        return response();
-      }
-
-      const payload = init?.body ? JSON.parse(init.body as string) : undefined;
-      if (url.startsWith("/api/board/columns/")) {
-        const columnId = url.split("/").at(-1);
-        board.columns = board.columns.map((column) =>
-          column.id === columnId ? { ...column, title: payload.title } : column
-        );
-      } else if (url === "/api/board/cards") {
-        const cardId = "card-test";
-        board.cards[cardId] = { id: cardId, title: payload.title, details: payload.details };
-        board.columns = board.columns.map((column) =>
-          column.id === String(payload.column_id)
-            ? { ...column, cardIds: [...column.cardIds, cardId] }
-            : column
-        );
-      } else if (init?.method === "PATCH") {
-        const cardId = url.split("/").at(-1) ?? "";
-        board.cards[cardId] = { ...board.cards[cardId], ...payload };
-      } else if (init?.method === "DELETE") {
-        const cardId = url.split("/").at(-1) ?? "";
-        delete board.cards[cardId];
-        board.columns = board.columns.map((column) => ({
-          ...column,
-          cardIds: column.cardIds.filter((id) => id !== cardId),
-        }));
-      }
-      return response();
-    })
-  );
+  api = installFakeApi();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
-const renderBoard = async (onLogout?: () => void) => {
-  render(<KanbanBoard onLogout={onLogout} />);
-  await screen.findByTestId("column-1");
+const renderBoard = async (props: Partial<Parameters<typeof KanbanBoard>[0]> = {}) => {
+  render(<KanbanBoard boardId="1" {...props} />);
+  await screen.findByTestId("column-11");
 };
 
 describe("KanbanBoard", () => {
-  it("loads five columns from the API", async () => {
+  it("loads the board's columns and summary from the API", async () => {
     await renderBoard();
 
-    expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
+    expect(columns()).toHaveLength(5);
+    expect(screen.getByLabelText("Board name")).toHaveValue("My first board");
+    expect(screen.getByText("2 cards across 5 columns")).toBeVisible();
+    expect(requests(api.fetchMock)).toEqual(["GET /api/boards/1"]);
+  });
+
+  it("renames the board and reports the change", async () => {
+    const user = userEvent.setup();
+    const onBoardChange = vi.fn();
+    await renderBoard({ onBoardChange });
+    const input = screen.getByLabelText("Board name");
+    await user.clear(input);
+    await user.type(input, "Launch plan{Enter}");
+
+    await waitFor(() =>
+      expect(onBoardChange).toHaveBeenCalledWith(expect.objectContaining({ name: "Launch plan" }))
+    );
+    expect(requests(api.fetchMock)).toContain("PATCH /api/boards/1");
+  });
+
+  it("deletes the board only after confirmation", async () => {
+    const user = userEvent.setup();
+    const onBoardDeleted = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await renderBoard({ onBoardDeleted });
+
+    await user.click(screen.getByRole("button", { name: "Delete board" }));
+    expect(onBoardDeleted).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete board" }));
+
+    await waitFor(() => expect(onBoardDeleted).toHaveBeenCalledOnce());
+    expect(confirm).toHaveBeenCalledWith('Delete "My first board" and all of its cards?');
+    expect(api.boards.has("1")).toBe(false);
   });
 
   it("renames a column", async () => {
     const user = userEvent.setup();
     await renderBoard();
-    const column = getFirstColumn();
-    const input = within(column).getByLabelText("Column title");
+    const input = within(getFirstColumn()).getByLabelText("Column title");
     await user.clear(input);
     await user.type(input, "New Name");
     await user.tab();
 
+    await waitFor(() => expect(api.boards.get("1")?.columns[0].title).toBe("New Name"));
     expect(input).toHaveValue("New Name");
   });
 
@@ -98,7 +84,63 @@ describe("KanbanBoard", () => {
     await user.tab();
 
     expect(input).toHaveValue("Backlog");
-    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+    expect(api.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds a column at the end of the board", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Add column" }));
+    await user.type(screen.getByLabelText("New column title"), "Blocked");
+    await user.click(screen.getByRole("button", { name: "Add column" }));
+
+    await waitFor(() => expect(columns()).toHaveLength(6));
+    expect(columnTitles().at(-1)).toBe("Blocked");
+  });
+
+  it("moves columns left and right from the column menu", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+
+    await user.click(screen.getByRole("button", { name: "Actions for Backlog" }));
+    expect(screen.getByRole("menuitem", { name: "Move left" })).toBeDisabled();
+    await user.click(screen.getByRole("menuitem", { name: "Move right" }));
+    await waitFor(() => expect(columnTitles().slice(0, 2)).toEqual(["Discovery", "Backlog"]));
+
+    await user.click(screen.getByRole("button", { name: "Actions for Backlog" }));
+    await user.click(screen.getByRole("menuitem", { name: "Move left" }));
+    await waitFor(() => expect(columnTitles().slice(0, 2)).toEqual(["Backlog", "Discovery"]));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("deletes an empty column without asking and a non-empty one after confirmation", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    await renderBoard();
+
+    await user.click(screen.getByRole("button", { name: "Actions for Discovery" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete column" }));
+    await waitFor(() => expect(columns()).toHaveLength(4));
+    expect(confirm).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Actions for Backlog" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete column" }));
+    expect(confirm).toHaveBeenCalledWith('Delete "Backlog" and its 2 cards?');
+    expect(columns()).toHaveLength(4);
+
+    await user.click(screen.getByRole("button", { name: "Actions for Backlog" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete column" }));
+    await waitFor(() => expect(columns()).toHaveLength(3));
+    expect(screen.getByText("0 cards across 3 columns")).toBeVisible();
+  });
+
+  it("closes the column menu with Escape", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    await user.click(screen.getByRole("button", { name: "Actions for Backlog" }));
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("edits a card", async () => {
@@ -117,8 +159,8 @@ describe("KanbanBoard", () => {
 
     expect(await within(column).findByText("Roadmap v2")).toBeInTheDocument();
     expect(within(column).getByText("Revised plan.")).toBeInTheDocument();
-    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledWith(
-      "/api/board/cards/1",
+    expect(api.fetchMock).toHaveBeenCalledWith(
+      "/api/boards/1/cards/101",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ title: "Roadmap v2", details: "Revised plan." }),
@@ -130,62 +172,34 @@ describe("KanbanBoard", () => {
     const user = userEvent.setup();
     await renderBoard();
     const column = getFirstColumn();
-    const addButton = within(column).getByRole("button", {
-      name: /add a card/i,
-    });
-    await user.click(addButton);
-
-    const titleInput = within(column).getByPlaceholderText(/card title/i);
-    await user.type(titleInput, "New card");
-    const detailsInput = within(column).getByPlaceholderText(/details/i);
-    await user.type(detailsInput, "Notes");
-
+    await user.click(within(column).getByRole("button", { name: /add a card/i }));
+    await user.type(within(column).getByPlaceholderText(/card title/i), "New card");
+    await user.type(within(column).getByPlaceholderText(/details/i), "Notes");
     await user.click(within(column).getByRole("button", { name: /add card/i }));
 
     expect(await within(column).findByText("New card")).toBeInTheDocument();
 
-    const deleteButton = within(column).getByRole("button", {
-      name: /delete new card/i,
-    });
-    await user.click(deleteButton);
+    await user.click(within(column).getByRole("button", { name: /delete new card/i }));
 
     await waitFor(() => {
       expect(within(column).queryByText("New card")).not.toBeInTheDocument();
     });
   });
 
-  it("provides a logout control", async () => {
-    const user = userEvent.setup();
-    const onLogout = vi.fn();
-    await renderBoard(onLogout);
-
-    await user.click(screen.getByRole("button", { name: "Log out" }));
-
-    expect(onLogout).toHaveBeenCalledOnce();
-  });
-
   it("shows a recoverable error when loading fails", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockRejectedValueOnce(new Error("Network error"))
-        .mockResolvedValueOnce(new Response(JSON.stringify(board), { status: 200 }))
-    );
+    api.fetchMock.mockRejectedValueOnce(new Error("Network error"));
     const user = userEvent.setup();
-    render(<KanbanBoard />);
+    render(<KanbanBoard boardId="1" />);
 
     expect(await screen.findByText(/unable to load the board/i)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByTestId("column-1")).toBeVisible();
+    expect(await screen.findByTestId("column-11")).toBeVisible();
   });
 
   it("keeps the board visible and reports a failed save", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.mocked(globalThis.fetch);
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(board), { status: 200 }));
-    fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
     await renderBoard();
+    api.fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
 
     const input = within(getFirstColumn()).getByLabelText("Column title");
     await user.clear(input);
@@ -193,19 +207,46 @@ describe("KanbanBoard", () => {
     await user.tab();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/board is unchanged/i);
-    expect(screen.getAllByTestId(/column-/i)).toHaveLength(5);
+    expect(columns()).toHaveLength(5);
+  });
+
+  it("reports a failed board deletion", async () => {
+    const user = userEvent.setup();
+    const onBoardDeleted = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await renderBoard({ onBoardDeleted });
+    api.fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }));
+
+    await user.click(screen.getByRole("button", { name: "Delete board" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/unable to delete the board/i);
+    expect(onBoardDeleted).not.toHaveBeenCalled();
+  });
+
+  it("hides and shows the assistant", async () => {
+    const user = userEvent.setup();
+    await renderBoard();
+    const toggle = screen.getByRole("button", { name: "Toggle assistant" });
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("ai-chat-sidebar").parentElement).toHaveClass("hidden");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
   });
 
   it("updates the visible board after an AI response includes a board update", async () => {
     const user = userEvent.setup();
-    await renderBoard();
+    const onBoardChange = vi.fn();
+    await renderBoard({ onBoardChange });
+    const board = sampleBoard();
     const updatedBoard: BoardData = {
       ...board,
-      columns: board.columns.map((column) =>
-        column.id === "1" ? { ...column, title: "AI Backlog" } : column
+      columns: board.columns.map((column, index) =>
+        index === 0 ? { ...column, title: "AI Backlog" } : column
       ),
     };
-    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+    api.fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({ assistantText: "Renamed the column.", board: updatedBoard }),
         { status: 200 }
@@ -217,5 +258,7 @@ describe("KanbanBoard", () => {
 
     expect(await screen.findByText("Renamed the column.")).toBeVisible();
     expect(within(getFirstColumn()).getByLabelText("Column title")).toHaveValue("AI Backlog");
+    expect(api.fetchMock).toHaveBeenLastCalledWith("/api/boards/1/chat", expect.anything());
+    expect(onBoardChange).toHaveBeenCalledWith(updatedBoard);
   });
 });

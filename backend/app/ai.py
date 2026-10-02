@@ -37,10 +37,13 @@ RESPONSE_FORMAT = {
 SYSTEM_PROMPT = (
     "You manage a Kanban board. Reply only with JSON matching this schema: "
     '{"version":1,"assistantText":"string","operations":[]}. '
-    "Operations may be rename_column(columnId,title), create_card(columnId,title,details), "
-    "update_card(cardId,title?,details?), move_card(cardId,columnId,position), or delete_card(cardId). "
+    "Operations may be update_board(name?,description?), create_column(title), "
+    "rename_column(columnId,title), move_column(columnId,position), delete_column(columnId), "
+    "create_card(columnId,title,details), update_card(cardId,title?,details?), "
+    "move_card(cardId,columnId,position), or delete_card(cardId). "
+    "Deleting a column also deletes its cards. "
     "Use only numeric IDs present in the provided board. "
-    "position is the zero-based index the card should occupy in the target column after the move. "
+    "position is the zero-based index the item should occupy after the move. "
     "Return an empty operations list when no board change is needed."
 )
 
@@ -49,14 +52,17 @@ class AIOutputError(ValueError):
     pass
 
 
-def request_ai_update(user_id: int, request: ChatRequest) -> tuple[AIOutput, dict[str, object] | None]:
+def request_ai_update(
+    user_id: int, board_id: int, request: ChatRequest
+) -> tuple[AIOutput, dict[str, object] | None]:
+    """Raises BoardItemNotFoundError if the board is not the user's."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": json.dumps(
                 {
-                    "board": board_data(user_id),
+                    "board": board_data(user_id, board_id),
                     "history": [message.model_dump() for message in request.history],
                     "question": request.message,
                 }
@@ -71,6 +77,6 @@ def request_ai_update(user_id: int, request: ChatRequest) -> tuple[AIOutput, dic
     if not output.operations:
         return output, None
     try:
-        return output, apply_operations(user_id, output.operations)
+        return output, apply_operations(user_id, board_id, output.operations)
     except BoardItemNotFoundError as error:
         raise AIOutputError("The AI response requested an invalid board change.") from error

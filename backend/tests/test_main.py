@@ -1,84 +1,45 @@
 import httpx
 import pytest
+from conftest import login
 
-from app.main import app
-
-
-@pytest.mark.anyio
-async def test_root_serves_static_page() -> None:
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        response = await client.get("/")
-
-    assert response.status_code == 200
-    assert "Welcome back" in response.text
+pytestmark = pytest.mark.anyio
 
 
-@pytest.mark.anyio
-async def test_login_grants_board_access_and_logout_revokes_it() -> None:
-    transport = httpx.ASGITransport(app=app)
+async def test_root_serves_login_until_signed_in(client: httpx.AsyncClient) -> None:
+    signed_out = await client.get("/")
+    await login(client)
+    signed_in = await client.get("/")
 
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        login_response = await client.post(
-            "/api/auth/login",
-            json={"username": "user", "password": "password"},
-        )
-        session_response = await client.get("/api/auth/session")
-        board_response = await client.get("/")
-        logout_response = await client.post("/api/auth/logout")
-        revoked_session_response = await client.get("/api/auth/session")
-        login_page_response = await client.get("/")
-
-    assert login_response.json() == {"authenticated": True}
-    assert session_response.json() == {"authenticated": True}
-    assert "Kanban Studio" in board_response.text
-    assert logout_response.status_code == 204
-    assert revoked_session_response.json() == {"authenticated": False}
-    assert "Welcome back" in login_page_response.text
+    assert signed_out.status_code == 200
+    assert "Welcome back" in signed_out.text
+    assert "Kanban Studio" in signed_in.text
+    assert "Welcome back" not in signed_in.text
 
 
-@pytest.mark.anyio
-async def test_login_rejects_invalid_credentials() -> None:
-    transport = httpx.ASGITransport(app=app)
+async def test_signed_out_pages_redirect_signed_in_users(client: httpx.AsyncClient) -> None:
+    login_page = await client.get("/login")
+    register_page = await client.get("/register")
+    account_redirect = await client.get("/account")
+    await login(client)
+    signed_in_login = await client.get("/login")
+    signed_in_register = await client.get("/register")
+    account_page = await client.get("/account")
 
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        response = await client.post(
-            "/api/auth/login",
-            json={"username": "user", "password": "incorrect"},
-        )
-        session_response = await client.get("/api/auth/session")
-
-    assert response.status_code == 401
-    assert session_response.json() == {"authenticated": False}
+    assert "Welcome back" in login_page.text
+    assert "Create your account" in register_page.text
+    assert account_redirect.status_code == 303
+    assert account_redirect.headers["location"] == "/login"
+    assert signed_in_login.headers["location"] == "/"
+    assert signed_in_register.headers["location"] == "/"
+    assert "Account settings" in account_page.text
 
 
-@pytest.mark.anyio
-async def test_health_returns_ok() -> None:
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        response = await client.get("/api/health")
+async def test_health_returns_ok(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-@pytest.mark.anyio
-async def test_favicon_is_served() -> None:
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        response = await client.get("/favicon.ico")
-
-    assert response.status_code == 200
+async def test_favicon_is_served(client: httpx.AsyncClient) -> None:
+    assert (await client.get("/favicon.ico")).status_code == 200
