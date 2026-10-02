@@ -1,190 +1,100 @@
-# Code review: Project Management MVP
+# Code Review
 
-Reviewed on 2026-10-01. Scope: the current project, not only a recent diff.
+Date: 2026-10-01
+Scope: whole repository at `bea2f98` (backend, frontend, Docker, scripts, tests).
 
-## Conclusion
+## Summary
 
-The architecture fits the local MVP: a static Next.js frontend, authenticated FastAPI routes, SQLite persistence, and a shared transactional board-operation service. The existing tests pass in the environments described below. However, **network exposure, stale AI commands, asynchronous board reconciliation, and failed-save recovery need correction before relying on the app for important board data**.
+The codebase is small, consistent and easy to follow. All board writes go through one function (`apply_operations`), and every write runs in a transaction. The server is the single source of truth. AI output is checked against a schema and applied all at once or not at all. Tests cover the main flows at every layer, and the AI is mocked in all of them. No high-severity issues were found. The findings below are mostly edge cases that give an unclear 500 error or a confusing UI state, plus some gaps in the build setup and tests.
 
-This review identifies **2 high-priority, 7 medium-priority, and 2 low-priority findings**. Each includes evidence and a regression-test recommendation. Application code was not changed. This report supersedes the earlier review; unsupported claims from that review are not carried forward as defects.
+Severity: **Medium** = a user can realistically hit it; **Low** = an edge case or small annoyance; **Nit** = cleanup.
 
-## Scope and verification
+## Findings
 
-Reviewed backend application and tests; frontend components, state utilities, styles, routing and tests; Docker/Compose; Windows and Unix scripts; dependency declarations and lockfile usage; repository guidance; and the plan, database and AI-schema documentation. Generated assets and third-party dependencies were not audited line by line. No live credentials were inspected, no live OpenRouter requests were made, and no existing board database was changed.
+### 1. Medium - Empty `choices` from OpenRouter gives a 500 instead of a 502
 
-| Check | Result |
-| --- | --- |
-| Frontend `npm run lint` | Passed. |
-| Frontend `npm run test:unit` | 26 tests passed across 4 files. |
-| Frontend `npm run build` | Passed, including TypeScript and static export. |
-| Backend existing pytest suite | 13 tests passed; one pytest import-rewrite warning. |
-| Temporary frontend reproductions | 3 checks confirmed lost queued results, stale manual/AI response ordering, and failed create/edit/rename behavior. These checks asserted the observed bugs, not the desired behavior. |
-| Isolated backend reproductions | Confirmed stale AI overwrite, deletion of a replacement card after ID reuse, boolean-ID coercion, and uncaught empty OpenRouter choices. |
-| Compose configuration | Parsed successfully. Published app port has no host-IP restriction. |
-| Unix executable metadata | All three `.sh` scripts are tracked as mode `100644`, not executable. |
-| `npm run test:e2e` | Blocked in global setup: Docker Desktop's Linux daemon was unavailable. No browser tests ran. |
+`backend/app/openrouter.py:32` reads `response.json()["choices"][0]`. If the reply has an empty `choices` list, this raises `IndexError`. The `except` at line 43 catches `KeyError, TypeError, ValueError`, but not `IndexError`, so the error is not turned into `OpenRouterError`. `request_ai_update` therefore does not catch it, and the request fails with an unhandled 500 instead of the 502 the rest of the AI path uses.
 
-Backend verification used an isolated Windows Python 3.14.5 environment installed from `backend/uv.lock` with `uv sync --locked --group test`. The test process pointed `main.STATIC_DIRECTORY` at the freshly built `frontend/out`; each test used a temporary SQLite database. This verifies backend logic and exported page responses, **not** the Python 3.13 Docker image, its mounts, or its complete static-serving configuration. Docker build/start/stop, native macOS/Linux execution, real browser drag behavior, and screen-reader behavior remain unverified in this review. No external vulnerability-advisory audit was performed.
+Fix: add `IndexError` to the tuple, or catch `LookupError`, which covers both `KeyError` and `IndexError`. Add a unit test for `ask_openrouter` that uses a mocked transport (see finding 10).
 
-## High-priority findings
+### 2. Medium - A session pointing at a deleted user gives a 500, and the UI never recovers
 
-### 1. Compose exposes the hardcoded-login app beyond localhost
+A session cookie stays valid as long as `SESSION_SECRET` is unchanged, and the README recommends setting it. If the database volume is then removed (`docker compose down -v`, or a fresh volume), the cookie still holds the old `user_id`. `_board_id` (`backend/app/database.py:170`) then runs `INSERT INTO boards (user_id)` for a user that no longer exists. With `foreign_keys = ON`, this raises `sqlite3.IntegrityError`, which becomes a 500. The frontend shows "Unable to load the board." with a Retry button that can never work, because only a 401 sends the user to `/login`.
 
-**Location:** `compose.yaml:8-9`; `backend/app/main.py:37-52`; `README.md:19-23`.
+Fix: in `require_authenticated`, or where the board is first loaded, treat a `user_id` with no matching `users` row as unauthenticated. Clear the session and return 401.
 
-The port mapping `${APP_PORT:-8000}:8000` does not bind a host address. Docker normally publishes it on all host interfaces, although actual remote reachability also depends on the host firewall and Docker configuration. The application uses the publicly documented `user` / `password` login and defaults to HTTP without secure-only cookies.
+### 3. Medium - AI changes are made against a board snapshot that can be up to 30 seconds old
 
-**Impact:** A machine that permits inbound access can expose the board and AI endpoint to other network users. Those users can authenticate with the documented credentials, modify/delete cards, and send requests using the configured OpenRouter key. This contradicts the local-only security assumption; hardcoded credentials themselves are an explicit MVP choice.
+`request_ai_update` (`backend/app/ai.py:52`) reads the board in one transaction, calls OpenRouter (up to 30 s), and applies the operations in a second transaction. The user can keep editing while the assistant shows "Thinking...". If they delete or move a card in that time, the AI's operations are applied to a board it never saw:
 
-**Recommendation:** Bind the published port to loopback, for example `127.0.0.1:${APP_PORT:-8000}:8000`. Keep Uvicorn listening on all interfaces *inside* the container. Treat any future remote-access configuration as a separate deployment requiring real authentication and TLS.
+- The card IDs it uses may no longer exist. The whole reply is then rejected with a generic 502, "invalid board change".
+- Positions in a `move_card` refer to the old card order, so the card can land in the wrong place without any error.
 
-**Regression check:** Assert the resolved Compose port includes `host_ip: 127.0.0.1`, then verify localhost access and lack of LAN access on a Docker-capable host.
+For a single-user MVP this is acceptable, but it should be a deliberate choice. Simple options: disable board editing while a chat request is in flight, or document the behavior in `docs/AI_SCHEMA.md`.
 
-### 2. Delayed AI operations can overwrite newer work or delete an unrelated replacement card
+### 4. Low - Chat board updates and drag/edit responses can overwrite each other
 
-**Location:** `backend/app/ai.py:52-74`; `backend/app/database.py:123-179`, and the `cards.id INTEGER PRIMARY KEY` declaration.
+`KanbanBoard.applyBoardChange` queues REST changes one after another and keeps only the newest response, using `boardChangeId`. Chat updates arrive through `onBoardUpdate` (`frontend/src/components/KanbanBoard.tsx:316`), which skips both the queue and the change counter. If a move request is still in flight when a chat response arrives, whichever response arrives last wins. That may be the older server state. Also, the rollback in `applyBoardChange` restores `previousBoard` as it was when the change started, which can undo a chat update that landed in between.
 
-The AI path reads the board, releases its transaction, calls OpenRouter, and later applies operations in a new transaction without checking whether the board changed. Transactional application prevents partial updates, but does not make the original snapshot current.
+Fix: have chat updates bump `boardChangeId.current` before calling `setBoard`. That makes any in-flight REST response stale.
 
-**Reproduced sequences:**
+### 5. Low - A failed column rename leaves the unsaved title in the input
 
-1. AI reads a column title; a manual request renames it while OpenRouter is pending; AI's later rename silently overwrites the manual edit.
-2. AI reads the highest-ID card; a manual delete removes that card; a new card is created. SQLite's ordinary `INTEGER PRIMARY KEY` allocation can reuse the deleted highest ID. The pending AI delete then removes the new, unrelated card. This was reproduced with the real board service and a mocked OpenRouter response.
+`ColumnTitle` (`frontend/src/components/KanbanColumn.tsx:24`) is keyed by `column.title`. If the PATCH fails (for example a 422 for a title over 120 characters, since the input has no `maxLength`, or a network error), `column.title` does not change. The component therefore does not reset, and the input keeps the rejected text while the error banner says "Your board is unchanged." After a reload, the old title comes back.
 
-**Recommendation:** Compare the prompt's board snapshot or an explicit board revision against current data *inside the write transaction* before applying AI operations. Reject stale commands with a clear retry/conflict response. Do not hold the SQLite write lock across the network call. Preventing ID reuse alone would not fix stale edits or moves.
+Fix: add `maxLength={120}` to the input, and reset the local title when the save fails. One simple way: key the component by the board-change counter as well as the title.
 
-**Regression tests:** Pause a mocked model call, perform an intervening manual mutation, resume it, and assert no AI changes persist. Cover rename conflicts and delete/create ID reuse. Test through the API as well as the service.
+### 6. Low - Over-length card input fails after the form has already been cleared
 
-## Medium-priority findings
+The backend limits are: card title 240 characters, details 4000, column title 120. None of these are set as `maxLength` on the inputs (`NewCardForm.tsx`, `KanbanCard.tsx`, `KanbanColumn.tsx`). `NewCardForm` clears and closes itself before the request finishes. If the request then fails with a 422, everything the user typed is lost and only a generic error appears.
 
-### 3. A later failed request hides an earlier successful queued save
+Fix: add matching `maxLength` attributes to the inputs. This is a one-line change per input and needs no new validation code.
 
-**Location:** `frontend/src/components/KanbanBoard.tsx:122-152`.
+### 7. Low - AI and OpenRouter failures are not logged
 
-`boardChangeId` advances when requests are queued, not when they succeed. Responses for all but the newest queued request are discarded. If the newest request fails, an earlier successful response is never reconciled into the displayed board.
+`request_ai_update` turns every OpenRouter and validation failure into the same generic message, and nothing logs the cause. The specific messages in `openrouter.py` (timeout, HTTP status, 429) are visible only through the smoke script. In the running app, a 502 from `/api/chat` leaves no trace of why it failed. That works against the project rule to find the root cause with evidence before fixing anything.
 
-**Reproduction:** Delay a rename of column A, then submit a rename of column B. Resolve A successfully and reject B. The database contains A's rename, but the header chips retain A's old name while the banner says the board is unchanged. A temporary component test confirmed this independently of chat and drag/drop.
+Fix: in `request_ai_update`, log the exception, plus the raw model output when validation fails, before raising `AIOutputError`.
 
-**Recommendation:** Retain the latest confirmed server state and reconcile it when the queue settles, including failure paths. Alternatively refetch the board after failed queued operations. Avoid restoring a render-time snapshot as if it were confirmed server state.
+### 8. Low - `.dockerignore` does not exclude `backend/.venv`
 
-**Regression tests:** Earlier success followed by later failure; earlier failure followed by later success; two failures after optimistic movement. Assert visible content and order, not merely the error banner.
+Patterns in `.dockerignore` are matched from the build context root, so `.venv` only excludes `/.venv`. If anyone runs `uv sync` or `uv run` on the host inside `backend/`, the resulting `backend/.venv` is copied by `COPY backend /app` and overwrites the Linux venv that `uv sync` built in the image. On a Windows host, that breaks the container.
 
-### 4. Chat updates bypass manual-mutation ordering and can be replaced by stale responses
+`frontend/out` and `frontend/tsconfig.tsbuildinfo` are not excluded either. They are harmless but enlarge the build context.
 
-**Location:** `frontend/src/components/KanbanBoard.tsx:140-149,321-325`; `frontend/src/components/ChatSidebar.tsx:53-55`.
+Fix: add `backend/.venv`, `frontend/out` and `frontend/tsconfig.tsbuildinfo` to `.dockerignore`.
 
-Chat sets board state directly without participating in the manual mutation queue or change counter.
+### 9. Low - The login check holds the database write lock while hashing
 
-**Reproduction:** Let a manual rename commit but delay delivery of its response. Let a subsequent AI edit return its newer board first. Deliver the older manual response: the AI edit disappears from the displayed board. A temporary component test confirmed this. An optimistic move's failure rollback can similarly restore state from before a chat update.
+`authenticate_mvp_user` (`backend/app/database.py:97`) runs Argon2 hashing or verification inside `transaction()`, which uses `BEGIN IMMEDIATE`. Argon2 is slow on purpose, so every login blocks all board writes for that time. It doesn't matter with one user, but the fix is simple: read the row, close the transaction, verify the password, and use a write transaction only for the first-time insert.
 
-**Impact:** The UI diverges from persisted data until another successful refresh. This is distinct from finding 2: the server may be completely correct while the browser renders an older response.
+### 10. Low - Test gaps
 
-**Recommendation:** Coordinate chat and manual board mutations through one ordering/reconciliation mechanism. A simple MVP option is to serialize them together; otherwise use server revisions and reconcile with a fresh board after overlapping requests settle. Merely incrementing a client counter does not establish server commit order.
+- No tests for `ask_openrouter` itself. The 429, timeout, non-JSON, empty-`choices` and empty-content paths are untested; finding 1 shows a real bug in this area. `httpx.MockTransport`, or monkeypatching `httpx.post`, would cover them without a live call.
+- Backend move tests only cover moving a card to position 0 of another column. There are none for moving down within the same column, a `position` past the end (clamped), or delete followed by renumbering. These are the trickiest parts of `apply_operations`.
+- No test for the stale-session case (finding 2).
+- No frontend test that a failed optimistic move rolls back the board.
 
-**Regression tests:** Delay a manual response until after an AI response, then exercise both manual success and failure. Also test the reverse response order.
+### 11. Nit - Smaller items
 
-### 5. Failed card creation and editing discard the user's draft
+- `openrouter.py:38`: the 429 message says "the configured free model", but `openai/gpt-oss-120b` is not the `:free` variant.
+- `frontend/package.json`: the `start` script (`next start`) does not work with `output: "export"`, and `frontend/public/*.svg` are unused Next.js template files. FastAPI doesn't serve `public/` assets anyway.
+- `KanbanBoard.handleDragEnd` sends a move request even when the card ends up in the same column and position (for example, dropping it just in front of its own next sibling). It's harmless, but each one is a wasted write and re-render.
+- `logout` in `KanbanBoard.tsx` does nothing on a non-OK response; the user gets no feedback.
+- `boards.updated_at` and `users.updated_at` are never updated after insert. `cards.updated_at` is.
 
-**Location:** `frontend/src/components/NewCardForm.tsx:13-20`; `frontend/src/components/KanbanCard.tsx:36-50`; `frontend/src/components/KanbanBoard.tsx:201-215`.
+## What is done well
 
-Creation clears both fields and closes immediately after calling a void callback. Editing also closes before the request finishes; reopening resets its state from the unchanged saved card. Neither form can observe whether persistence succeeded because the parent discards the mutation promise and catches errors internally.
+- One mutation path (`apply_operations`) for REST and AI. It checks ownership on every operation and keeps positions contiguous with a simple two-step renumbering that avoids `UNIQUE` conflicts.
+- All-or-nothing AI changes: the reply is checked against Pydantic models with a discriminated union, the number of operations is capped, and a single transaction means a bad reply leaves the board unchanged.
+- Sound security for an MVP: Argon2id hashes, a signed HTTP-only `SameSite=Lax` cookie, every board route behind `UserId`, ownership enforced in SQL, `.env` kept out of git and out of the image, and the API key never sent to the browser.
+- The Playwright suite runs on a separate Compose project with its own volume, so tests cannot damage the real board.
+- The documentation (`CLAUDE.md`, each directory's `AGENTS.md`, `docs/`) is accurate and matches the code.
 
-**Reproduction:** Fill a card title/details and return HTTP 500 for POST or PATCH. The draft is no longer recoverable through the form. Both paths were reproduced in a component check. Overlong values are another realistic trigger: the browser fields do not enforce the backend's title/details limits.
+## Recommended order
 
-**Recommendation:** Propagate an explicit success/failure result through the mutation callbacks. Keep the form and draft on failure; clear/close only after success. Disable duplicate submission while pending. Matching client-side length limits would also make validation failures understandable.
-
-**Regression tests:** Reject creation and editing, assert both input values survive, then retry successfully. Include backend length-limit rejection, not just a network error.
-
-### 6. A failed column rename still looks saved in the column input
-
-**Location:** `frontend/src/components/KanbanColumn.tsx:24-38,75-80`; `frontend/src/components/KanbanBoard.tsx:193-199`.
-
-The title input owns local state and resets only when its key, the confirmed column title, changes. A rejected rename leaves that key unchanged and preserves the rejected text. The input and header chip therefore disagree.
-
-**Reproduction:** Enter a new column title, blur, and return HTTP 500. The input still displays the new value; the server and header retain the old value. Confirmed by a temporary component check. The existing failed-save test only checks the banner and column count.
-
-**Recommendation:** Return the rename result to the input and either restore the confirmed title on failure or visibly retain an unsaved draft with a retry action.
-
-**Regression test:** Assert the input, header chip, saved title, and failure indication agree after rejection and after retry.
-
-### 7. AI validation coerces boolean identifiers into real card IDs
-
-**Location:** `backend/app/operations.py:21-48`; `backend/app/ai.py:23-26,67`.
-
-Pydantic's default integer coercion accepts `true` as `1`; extra properties are also silently ignored. This is not just a cosmetic mismatch with the documented numeric-ID contract.
-
-**Reproduction:** Return an otherwise valid model response containing `{"type":"delete_card","cardId":true,"unexpected":"ignored"}`. It validates and deletes card 1. This was confirmed against an isolated database. Ownership checks still apply, so this is not a cross-user authorization bypass.
-
-**Recommendation:** Make identifiers and positions strict integers, and reject extra fields in the AI envelope and operation models. Ensure nested operation models enforce these constraints too. Keep the generated JSON schema consistent with runtime validation.
-
-**Regression tests:** Boolean and string identifiers, string positions, and unknown fields must reject the complete batch without changing the database. Include a valid operation before an invalid one to verify atomic rejection.
-
-### 8. The documented Unix start/stop commands are not executable in a fresh checkout
-
-**Location:** Git executable metadata for `scripts/start.sh`, `scripts/stop.sh`, and `scripts/smoke-openrouter.sh`; `README.md:20-23`; `docs/PLAN.md` Part 8.
-
-All three shell scripts are tracked as mode `100644`. On a normal Linux/macOS checkout, invoking them directly as documented fails with permission denied before Docker is called. Their shebangs do not confer executable permission.
-
-**Recommendation:** Record mode `100755` for these scripts, or consistently document invocation through `sh`. Setting executable metadata is the smaller fix for the existing usage.
-
-**Regression check:** Inspect `git ls-files -s scripts` and run the documented commands on a Unix checkout. This review verified metadata, not native Unix execution.
-
-### 9. The whole sortable card is an interactive control containing other controls
-
-**Location:** `frontend/src/components/KanbanCard.tsx:54-67,113-130`.
-
-The card article receives dnd-kit button-role/focus attributes while containing independent Edit and Delete buttons. This creates nested interactive semantics and an unnecessarily broad drag activator. The existing keyboard-move test demonstrates one supported drag sequence, but does not establish correct assistive-technology behavior for the nested controls.
-
-**Recommendation:** Give dragging a dedicated, named handle button with the activator ref, attributes and listeners; leave the containing article non-interactive. Keep Edit and Delete as separate sibling controls.
-
-**Regression checks:** Inspect the accessibility tree and tab order, activate Edit/Delete independently, and verify keyboard pickup, movement, drop and cancellation through the handle. The markup concern is supported by source inspection; screen-reader impact was not tested here.
-
-## Low-priority findings
-
-### 10. An empty OpenRouter choices array escapes the error-handling boundary
-
-**Location:** `backend/app/openrouter.py:31-44`; `backend/app/ai.py:67-69`.
-
-`response.json()["choices"][0]` raises `IndexError` for `{"choices":[]}`. The client catches other malformed-response exceptions but not this one, so the chat route produces an unhandled server error instead of its intended controlled upstream error. The live smoke command likewise escapes its friendly `OpenRouterError` handler.
-
-**Evidence:** A mocked HTTP 200 response with an empty choices array reproduced the uncaught `IndexError`. No claim is made that the live provider currently emits this response.
-
-**Recommendation:** Validate that a choice exists before indexing, or include this shape in the malformed-response handling. Add direct mocked tests of the HTTP client; existing AI tests replace `ask_openrouter` entirely and cannot catch this.
-
-### 11. HTTP server failures during login are mislabeled as bad credentials
-
-**Location:** `frontend/src/components/LoginForm.tsx:33-40`.
-
-Every non-successful HTTP response shows "Check your username and password," including HTTP 500 and 503. Fetch/network exceptions already get the more accurate unavailable message; the earlier review incorrectly grouped them with this problem.
-
-**Recommendation:** Use the credentials message for HTTP 401 and the unavailable/retry message for server failures.
-
-**Regression tests:** Distinguish HTTP 401, HTTP 503, and rejected fetch responses. This finding is based on the explicit response branch, not a live outage.
-
-## Other observations and limits
-
-- **Test setup requires a root `.env` file.** `compose.yaml:6-7` makes it mandatory, including for the isolated e2e stack. An empty file is sufficient for mocked AI tests; an API key is not inherently required. Consider an optional env file or a documented test-only setup. Do not describe this as proof that automated tests require a live key.
-- **Failed e2e setup can leave resources behind.** `frontend/tests/global-setup.ts:15-17` only returns teardown after `up --wait` succeeds. If startup partially succeeds then fails its health check, the disposable project may remain. Add cleanup on setup failure, scoped strictly to `pm-e2e`. This failure sequence was not exercised because the daemon was unavailable.
-- **Accessibility follow-up:** New-card fields rely on placeholders rather than explicit labels (`NewCardForm.tsx:27-43`). Add persistent accessible labels alongside the drag-handle work. Browser/screen-reader behavior needs verification.
-- **AI context is not size-bounded by board size.** History and operation counts are bounded, but every card is sent. Monitor this if boards grow; silently truncating cards would remove context the assistant needs and is not automatically the right fix.
-- **SQLite maintenance is lower priority for this MVP.** Read transactions deliberately acquire the write lock and seed on first access, as documented. The fixed ordering offset of 1,000,000 has a theoretical large-column collision boundary; ordinary MVP-sized boards did not demonstrate a failure. Card timestamps are updated during reordering and board timestamps are not maintained. Clarify timestamp semantics before using them for user-facing history or revisions.
-- **Production security remains outside the stated deployment model.** Signed-cookie sessions, hardcoded credentials, and no server-side session revocation are not a production authentication system. Preserve the local-only boundary rather than interpreting the passing authentication tests as production readiness.
-- **Dependency installation and AI runtime are separate concerns.** The image installs locked runtime dependencies, while the documented backend test command installs the test group at execution time. Dependency installation may require network access even though the tests themselves mock AI. Frontend builds also obtain Google fonts. The live structured-output provider path was not exercised.
-
-## Existing strengths and corrections to the previous review
-
-- `apply_operations` centralizes REST and AI writes, checks board ownership, and rolls back invalid batches. Keep this service boundary.
-- Argon2 password hashing, HTTP-only signed cookies, protected board routes, and temporary-database tests provide useful MVP safeguards. SQL mutations use bound parameters; board/chat text is rendered as React text rather than injected HTML.
-- Prefixed drag/drop IDs correctly separate colliding card and column numbers. A new wrapper abstraction is not justified solely because callers must use these existing helpers.
-- The e2e Compose project and volume are separate from normal app data. The AI browser test uses `page.route` to supply a response; it does **not** persist its column rename. The earlier assertion that this rename makes the suite order-dependent was unsupported.
-- The prior claim that card edits preserve failed drafts was incorrect: editing closes immediately and reopening overwrites the draft. Finding 5 covers the actual behavior.
-- Generic stale-closure speculation has been replaced with the independently reproduced request sequences in findings 3 and 4.
-- Import-time configuration and currently unused future-facing timestamp fields do not, by themselves, warrant refactoring in this local MVP.
-
-## Recommended remediation order
-
-1. Restrict published network access and reject stale AI commands (findings 1-2).
-2. Fix board-response reconciliation and preserve failed drafts (findings 3-6), with delayed-response and retry tests.
-3. Tighten model-output validation and restore documented Unix usability (findings 7-8).
-4. Verify and correct accessibility and error reporting (findings 9-11).
-5. Rerun the complete Docker-backed Playwright suite and native lifecycle smoke checks once Docker is available. Passing unit tests alone should not close these findings.
+1. Finding 1 (one-line fix, plus tests from 10).
+2. Finding 2 (stale session gives a 500 and the UI gets stuck).
+3. Finding 8 (`.dockerignore`, one-line fix that prevents a confusing broken build).
+4. Findings 5 and 6 (`maxLength` attributes and rename reset).
+5. Finding 7 (logging), then decide on 3 and 4.
