@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CircleAlert, LoaderCircle, LogOut, RotateCw, SquareKanban, UserRound } from "lucide-react";
+import { LogOut, SquareKanban, UserRound } from "lucide-react";
 import { BoardSidebar } from "@/components/BoardSidebar";
 import { KanbanBoard } from "@/components/KanbanBoard";
+import { ErrorBanner, LoadState } from "@/components/LoadState";
 import { apiRequest, jsonRequest } from "@/lib/api";
 import { summarizeBoard, type BoardData, type BoardSummary } from "@/lib/kanban";
 
@@ -104,6 +105,11 @@ export const Workspace = ({ onLogout = logout }: WorkspaceProps) => {
     );
   };
 
+  const retryLoad = () => {
+    setError("");
+    setLoadAttempt((attempt) => attempt + 1);
+  };
+
   const removeSelectedBoard = () => {
     const remaining = (boards ?? []).filter((board) => board.id !== selectedId);
     setBoards(remaining);
@@ -138,27 +144,7 @@ export const Workspace = ({ onLogout = logout }: WorkspaceProps) => {
       </header>
 
       {boards === null ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-sm font-medium text-[var(--text-muted)]">
-          {error ? (
-            <CircleAlert aria-hidden="true" size={28} className="text-[var(--secondary-purple)]" />
-          ) : (
-            <LoaderCircle aria-hidden="true" size={28} className="animate-spin text-[var(--primary-blue)]" />
-          )}
-          <p>{error || "Loading your boards..."}</p>
-          {error && (
-            <button
-              type="button"
-              onClick={() => {
-                setError("");
-                setLoadAttempt((attempt) => attempt + 1);
-              }}
-              className="flex items-center gap-2 rounded-lg border border-[var(--stroke-strong)] bg-white px-4 py-2 text-sm font-semibold text-[var(--navy-dark)] shadow-[var(--shadow-sm)] transition hover:border-[var(--primary-blue)] hover:text-[var(--primary-blue)]"
-            >
-              <RotateCw aria-hidden="true" size={15} />
-              Retry
-            </button>
-          )}
-        </div>
+        <LoadState error={error} loadingText="Loading your boards..." onRetry={retryLoad} />
       ) : (
         <div className="flex flex-1 flex-col lg:min-h-0 lg:flex-row">
           <BoardSidebar
@@ -168,15 +154,7 @@ export const Workspace = ({ onLogout = logout }: WorkspaceProps) => {
             onCreate={createBoard}
           />
           <div className="flex min-w-0 flex-1 flex-col lg:min-h-0">
-            {error && (
-              <p
-                className="flex shrink-0 items-center gap-2 border-b border-[var(--secondary-purple)]/20 bg-[var(--secondary-purple)]/10 px-6 py-2 text-sm font-medium text-[var(--secondary-purple)]"
-                role="alert"
-              >
-                <CircleAlert aria-hidden="true" size={16} className="shrink-0" />
-                {error}
-              </p>
-            )}
+            {error && <ErrorBanner message={error} />}
             {selectedId ? (
               <KanbanBoard
                 key={selectedId}

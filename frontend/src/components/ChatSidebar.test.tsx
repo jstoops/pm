@@ -1,9 +1,8 @@
-import "@testing-library/jest-dom/vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatSidebar } from "./ChatSidebar";
-import type { BoardData } from "../lib/kanban";
+import { afterEach, vi } from "vitest";
+import { ChatSidebar } from "@/components/ChatSidebar";
+import type { BoardData } from "@/lib/kanban";
 
 const updatedBoard: BoardData = {
   id: "7",

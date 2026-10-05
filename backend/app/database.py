@@ -300,15 +300,13 @@ def apply_operations(
                     _require_column(connection, board_id, operation.column_id)
                     source_cards = _card_ids(connection, source_id)
                     source_cards.remove(operation.card_id)
-                    target_cards = (
-                        source_cards
-                        if source_id == operation.column_id
-                        else _card_ids(connection, operation.column_id)
-                    )
+                    if source_id == operation.column_id:
+                        target_cards = source_cards
+                    else:
+                        _write_column_order(connection, source_id, source_cards)
+                        target_cards = _card_ids(connection, operation.column_id)
                     target_cards.insert(min(operation.position, len(target_cards)), operation.card_id)
-                    _write_column_order(connection, source_id, source_cards)
-                    if source_id != operation.column_id:
-                        _write_column_order(connection, operation.column_id, target_cards)
+                    _write_column_order(connection, operation.column_id, target_cards)
                 case DeleteCard():
                     column_id = _require_card_column(connection, board_id, operation.card_id)
                     connection.execute("DELETE FROM cards WHERE id = ?", (operation.card_id,))
@@ -471,8 +469,7 @@ def _write_column_order(
     connection.execute(
         "UPDATE cards SET position = position + 1000000 WHERE column_id = ?", (column_id,)
     )
-    for position, card_id in enumerate(card_ids):
-        connection.execute(
-            "UPDATE cards SET column_id = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (column_id, position, card_id),
-        )
+    connection.executemany(
+        "UPDATE cards SET column_id = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        [(column_id, position, card_id) for position, card_id in enumerate(card_ids)],
+    )

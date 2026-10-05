@@ -26,7 +26,7 @@ export type BoardSummary = {
   updatedAt: string;
 };
 
-export const summarizeBoard = (board: BoardData): Pick<BoardSummary, "id" | "name" | "description" | "cardCount"> => ({
+export const summarizeBoard = (board: BoardData): Omit<BoardSummary, "updatedAt"> => ({
   id: board.id,
   name: board.name,
   description: board.description,

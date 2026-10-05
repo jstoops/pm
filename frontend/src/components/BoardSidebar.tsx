@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { useState, type FormEvent } from "react";
 import { FolderKanban, Plus } from "lucide-react";
+import { compactInputClass, FormActions } from "@/components/FormActions";
 import type { BoardSummary } from "@/lib/kanban";
 
 type BoardSidebarProps = {
@@ -22,12 +23,13 @@ export const BoardSidebar = ({ boards, selectedId, onSelect, onCreate }: BoardSi
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!name.trim() || isSubmitting) {
+    const boardName = name.trim();
+    if (!boardName || isSubmitting) {
       return;
     }
     setIsSubmitting(true);
     try {
-      await onCreate(name.trim());
+      await onCreate(boardName);
       close();
     } finally {
       setIsSubmitting(false);
@@ -61,26 +63,11 @@ export const BoardSidebar = ({ boards, selectedId, onSelect, onCreate }: BoardSi
             placeholder="Board name"
             aria-label="New board name"
             maxLength={120}
-            className="w-full rounded-md border border-[var(--stroke-strong)] bg-white px-2.5 py-1.5 text-sm text-[var(--navy-dark)] outline-none transition placeholder:text-[var(--gray-text)] focus:border-[var(--primary-blue)] focus:ring-2 focus:ring-[var(--primary-blue)]/20"
+            className={compactInputClass}
             required
             autoFocus
           />
-          <div className="flex items-center gap-2">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="rounded-md bg-[var(--secondary-purple)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
-            >
-              Create board
-            </button>
-            <button
-              type="button"
-              onClick={close}
-              className="rounded-md px-3 py-1.5 text-xs font-semibold text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--navy-dark)]"
-            >
-              Cancel
-            </button>
-          </div>
+          <FormActions submitLabel="Create board" onCancel={close} isSubmitting={isSubmitting} />
         </form>
       )}
       <ul className="thin-scrollbar flex gap-1 overflow-x-auto px-3 pb-3 pt-1 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-visible">

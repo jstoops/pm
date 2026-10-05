@@ -22,7 +22,9 @@ def reply(
     )
 
 
-async def chat(client: httpx.AsyncClient, board_id: str, message: str = "Do something"):
+async def chat(
+    client: httpx.AsyncClient, board_id: str, message: str = "Do something"
+) -> httpx.Response:
     return await client.post(f"/api/boards/{board_id}/chat", json={"message": message})
 
 

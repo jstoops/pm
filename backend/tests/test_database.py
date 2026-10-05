@@ -47,13 +47,14 @@ def test_single_board_database_upgrades_without_losing_data(
     database.initialize_database()
 
     assert database.authenticate("user", "password") == 1
-    assert database.list_boards(1) == [
+    boards = database.list_boards(1)
+    assert boards == [
         {
             "id": "7",
             "name": "My board",
             "description": "",
             "cardCount": 1,
-            "updatedAt": database.list_boards(1)[0]["updatedAt"],
+            "updatedAt": boards[0]["updatedAt"],
         }
     ]
     board = database.board_data(1, 7)

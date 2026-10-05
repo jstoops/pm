@@ -55,6 +55,14 @@ const createCard = async (page: Page, title: string, columnIndex = 0) => {
   await expect(column.getByText(title)).toBeVisible();
 };
 
+const cardByTitle = (page: Page, title: string) =>
+  page
+    .locator('[data-testid^="card-"]')
+    .filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+
+const waitForMove = (page: Page) =>
+  page.waitForResponse((response) => response.url().includes("/move") && response.status() === 200);
+
 const cardTitles = (page: Page, columnIndex: number) =>
   columns(page).nth(columnIndex).locator('[data-testid^="card-"] h4').allInnerTexts();
 
@@ -90,9 +98,7 @@ const dragCardAbove = async (
   columnIndex: number,
   cardIndex: number
 ) => {
-  const card = page
-    .locator('[data-testid^="card-"]')
-    .filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+  const card = cardByTitle(page, title);
   const target = columns(page).nth(columnIndex).locator('[data-testid^="card-"]').nth(cardIndex);
   const cardBox = await card.boundingBox();
   const targetBox = await target.boundingBox();
@@ -100,9 +106,7 @@ const dragCardAbove = async (
     throw new Error("Unable to resolve drag coordinates.");
   }
 
-  const moveResponse = page.waitForResponse(
-    (response) => response.url().includes("/move") && response.status() === 200
-  );
+  const moveResponse = waitForMove(page);
   await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + 6, { steps: 15 });
@@ -189,9 +193,7 @@ test.describe("signed in", () => {
 
     await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
     await page.mouse.down();
-    const moveResponse = page.waitForResponse(
-      (response) => response.url().includes("/move") && response.status() === 200
-    );
+    const moveResponse = waitForMove(page);
     await page.mouse.move(targetBox.x + targetBox.width / 2, cardBox.y + cardBox.height / 2, {
       steps: 12,
     });
@@ -207,10 +209,7 @@ test.describe("signed in", () => {
     const title = uniqueTitle("Editable card");
     await createCard(page, title);
     // Editing replaces the title heading, so locate the card by its stable test id.
-    const cardTestId = await page
-      .locator('[data-testid^="card-"]')
-      .filter({ has: page.getByRole("heading", { name: title, exact: true }) })
-      .getAttribute("data-testid");
+    const cardTestId = await cardByTitle(page, title).getAttribute("data-testid");
     const card = page.getByTestId(cardTestId!);
 
     await card.getByRole("button", { name: `Edit ${title}` }).click();
@@ -368,12 +367,8 @@ test.describe("signed in", () => {
     });
 
     test("moves a card down its column with the keyboard", async ({ page }) => {
-      const moveResponse = page.waitForResponse(
-        (response) => response.url().includes("/move") && response.status() === 200
-      );
-      const card = page
-        .locator('[data-testid^="card-"]')
-        .filter({ has: page.getByRole("heading", { name: "Alpha", exact: true }) });
+      const moveResponse = waitForMove(page);
+      const card = cardByTitle(page, "Alpha");
       const dragId = (await card.getAttribute("data-testid"))!.replace("card-", "card:");
       await card.focus();
       // dnd-kit announces each keyboard drag step. The keyboard sensor attaches

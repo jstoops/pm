@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
 import {
   closestCorners,
@@ -15,19 +13,13 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import clsx from "clsx";
-import {
-  CircleAlert,
-  LoaderCircle,
-  PanelRightClose,
-  PanelRightOpen,
-  RotateCw,
-  Trash2,
-} from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Trash2 } from "lucide-react";
 import { AddColumnForm } from "@/components/AddColumnForm";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { InlineTitle } from "@/components/InlineTitle";
-import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
+import { KanbanColumn } from "@/components/KanbanColumn";
+import { ErrorBanner, LoadState } from "@/components/LoadState";
 import { apiRequest, jsonRequest } from "@/lib/api";
 import { moveCard, parseDragId, type BoardData } from "@/lib/kanban";
 
@@ -93,7 +85,7 @@ export const KanbanBoard = ({ boardId, onBoardChange, onBoardDeleted }: KanbanBo
   useEffect(() => {
     let isCurrent = true;
 
-    void apiRequest<BoardData>(`/api/boards/${boardId}`)
+    void apiRequest<BoardData>(boardUrl)
       .then((nextBoard) => {
         if (isCurrent) {
           setBoard(nextBoard);
@@ -108,15 +100,11 @@ export const KanbanBoard = ({ boardId, onBoardChange, onBoardDeleted }: KanbanBo
     return () => {
       isCurrent = false;
     };
-  }, [boardId, loadAttempt]);
+  }, [boardUrl, loadAttempt]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   const showServerBoard = (nextBoard: BoardData) => {
@@ -139,11 +127,11 @@ export const KanbanBoard = ({ boardId, onBoardChange, onBoardDeleted }: KanbanBo
       () => undefined
     );
 
+    setError("");
+    if (optimisticBoard) {
+      setBoard(optimisticBoard);
+    }
     try {
-      setError("");
-      if (optimisticBoard) {
-        setBoard(optimisticBoard);
-      }
       const nextBoard = await request;
       if (changeId === boardChangeId.current) {
         showServerBoard(nextBoard);
@@ -252,34 +240,20 @@ export const KanbanBoard = ({ boardId, onBoardChange, onBoardDeleted }: KanbanBo
     void applyBoardChange(`/cards/${cardId}`, { method: "DELETE" });
   };
 
-  const activeCard = activeCardId ? board?.cards[activeCardId] : null;
-
   if (!board) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-sm font-medium text-[var(--text-muted)]">
-        {error ? (
-          <CircleAlert aria-hidden="true" size={28} className="text-[var(--secondary-purple)]" />
-        ) : (
-          <LoaderCircle aria-hidden="true" size={28} className="animate-spin text-[var(--primary-blue)]" />
-        )}
-        <p>{error || "Loading board..."}</p>
-        {error && (
-          <button
-            type="button"
-            onClick={() => {
-              setError("");
-              setLoadAttempt((attempt) => attempt + 1);
-            }}
-            className="flex items-center gap-2 rounded-lg border border-[var(--stroke-strong)] bg-white px-4 py-2 text-sm font-semibold text-[var(--navy-dark)] shadow-[var(--shadow-sm)] transition hover:border-[var(--primary-blue)] hover:text-[var(--primary-blue)]"
-          >
-            <RotateCw aria-hidden="true" size={15} />
-            Retry
-          </button>
-        )}
-      </div>
+      <LoadState
+        error={error}
+        loadingText="Loading board..."
+        onRetry={() => {
+          setError("");
+          setLoadAttempt((attempt) => attempt + 1);
+        }}
+      />
     );
   }
 
+  const activeCard = activeCardId ? board.cards[activeCardId] : null;
   const cardCount = Object.keys(board.cards).length;
   const toolbarButtonClass =
     "flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--navy-dark)]";
@@ -327,15 +301,7 @@ export const KanbanBoard = ({ boardId, onBoardChange, onBoardDeleted }: KanbanBo
         </div>
       </div>
 
-      {error && (
-        <p
-          className="flex shrink-0 items-center gap-2 border-b border-[var(--secondary-purple)]/20 bg-[var(--secondary-purple)]/10 px-6 py-2 text-sm font-medium text-[var(--secondary-purple)]"
-          role="alert"
-        >
-          <CircleAlert aria-hidden="true" size={16} className="shrink-0" />
-          {error}
-        </p>
-      )}
+      {error && <ErrorBanner message={error} />}
 
       <DndContext
         sensors={sensors}

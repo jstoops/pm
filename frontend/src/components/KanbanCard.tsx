@@ -3,6 +3,8 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import clsx from "clsx";
 import { Pencil, Trash2 } from "lucide-react";
+import { compactInputClass, FormActions } from "@/components/FormActions";
+import { CardText } from "@/components/KanbanCardPreview";
 import { cardDragId, type Card } from "@/lib/kanban";
 
 type KanbanCardProps = {
@@ -13,9 +15,6 @@ type KanbanCardProps = {
 
 const iconButtonClass =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--gray-text)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--navy-dark)]";
-
-const inputClass =
-  "w-full rounded-md border border-[var(--stroke-strong)] bg-white px-2.5 py-1.5 text-sm text-[var(--navy-dark)] outline-none transition focus:border-[var(--primary-blue)] focus:ring-2 focus:ring-[var(--primary-blue)]/20";
 
 export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -31,11 +30,6 @@ export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
     isDragging,
   } = useSortable({ id: cardDragId(card.id), disabled: isEditing });
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-
   const startEditing = () => {
     setTitle(card.title);
     setDetails(card.details);
@@ -44,11 +38,13 @@ export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim()) {
+    const nextTitle = title.trim();
+    const nextDetails = details.trim();
+    if (!nextTitle) {
       return;
     }
-    if (title.trim() !== card.title || details.trim() !== card.details) {
-      onUpdate(card.id, title.trim(), details.trim());
+    if (nextTitle !== card.title || nextDetails !== card.details) {
+      onUpdate(card.id, nextTitle, nextDetails);
     }
     setIsEditing(false);
   };
@@ -59,7 +55,7 @@ export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
         setNodeRef(node);
         setActivatorNodeRef(node);
       }}
-      style={style}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
       className={clsx(
         "group rounded-lg border border-[var(--stroke)] bg-white px-3 py-2.5 shadow-[var(--shadow-sm)] outline-none",
         "transition-[border-color,box-shadow] duration-150 hover:border-[var(--stroke-strong)] focus-visible:ring-2 focus-visible:ring-[var(--primary-blue)]",
@@ -76,7 +72,7 @@ export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             aria-label="Card title"
-            className={clsx(inputClass, "font-semibold")}
+            className={clsx(compactInputClass, "font-semibold")}
             required
             autoFocus
           />
@@ -85,35 +81,14 @@ export const KanbanCard = ({ card, onDelete, onUpdate }: KanbanCardProps) => {
             onChange={(event) => setDetails(event.target.value)}
             aria-label="Card details"
             rows={3}
-            className={clsx(inputClass, "resize-none")}
+            className={clsx(compactInputClass, "resize-none")}
           />
-          <div className="flex items-center gap-2">
-            <button
-              type="submit"
-              className="rounded-md bg-[var(--secondary-purple)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsEditing(false)}
-              className="rounded-md px-3 py-1.5 text-xs font-semibold text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--navy-dark)]"
-            >
-              Cancel
-            </button>
-          </div>
+          <FormActions submitLabel="Save" onCancel={() => setIsEditing(false)} />
         </form>
       ) : (
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <h4 className="break-words text-sm font-semibold leading-5 text-[var(--navy-dark)]">
-              {card.title}
-            </h4>
-            {card.details && (
-              <p className="mt-1 break-words text-[13px] leading-5 text-[var(--text-muted)]">
-                {card.details}
-              </p>
-            )}
+            <CardText card={card} />
           </div>
           <div className="-mr-1 -mt-0.5 flex shrink-0 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100">
             <button

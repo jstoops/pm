@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 from starlette.middleware.sessions import SessionMiddleware
@@ -18,7 +18,6 @@ from app.operations import (
     BoardChanges,
     BoardDescription,
     BoardName,
-    BoardOperation,
     CardChanges,
     CardDetails,
     CardTitle,
@@ -87,11 +86,7 @@ class BoardCreateRequest(BaseModel):
     description: BoardDescription = ""
 
 
-class ColumnCreateRequest(BaseModel):
-    title: ColumnTitle
-
-
-class ColumnRenameRequest(BaseModel):
+class ColumnRequest(BaseModel):
     title: ColumnTitle
 
 
@@ -133,22 +128,17 @@ def require_authenticated(request: Request) -> int:
 UserId = Annotated[int, Depends(require_authenticated)]
 
 
-def not_found(error: BoardItemNotFoundError) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
-
-
-def change_board(user_id: int, board_id: int, operation: BoardOperation) -> dict[str, object]:
-    try:
-        return database.apply_operations(user_id, board_id, [operation])
-    except BoardItemNotFoundError as error:
-        raise not_found(error) from error
+@app.exception_handler(BoardItemNotFoundError)
+def board_item_not_found(_request: Request, error: BoardItemNotFoundError) -> JSONResponse:
+    """Any board, column or card outside the user's boards is a 404, from every route."""
+    return JSONResponse({"detail": str(error)}, status_code=status.HTTP_404_NOT_FOUND)
 
 
 def page(request: Request, name: str, *, signed_in: bool) -> Response:
     """Serves a static page to visitors in the matching session state, else redirects."""
     if (session_user_id(request) is not None) != signed_in:
         return RedirectResponse(
-            url="/" if not signed_in else "/login", status_code=status.HTTP_303_SEE_OTHER
+            url="/login" if signed_in else "/", status_code=status.HTTP_303_SEE_OTHER
         )
     return FileResponse(STATIC_DIRECTORY / name)
 
@@ -254,25 +244,19 @@ def create_board(payload: BoardCreateRequest, user_id: UserId) -> dict[str, obje
 
 @app.get("/api/boards/{board_id}")
 def get_board(board_id: int, user_id: UserId) -> dict[str, object]:
-    try:
-        return database.board_data(user_id, board_id)
-    except BoardItemNotFoundError as error:
-        raise not_found(error) from error
+    return database.board_data(user_id, board_id)
 
 
 @app.patch("/api/boards/{board_id}")
 def update_board(board_id: int, payload: BoardChanges, user_id: UserId) -> dict[str, object]:
-    return change_board(
-        user_id, board_id, UpdateBoard(name=payload.name, description=payload.description)
+    return database.apply_operations(
+        user_id, board_id, [UpdateBoard(name=payload.name, description=payload.description)]
     )
 
 
 @app.delete("/api/boards/{board_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_board(board_id: int, user_id: UserId) -> Response:
-    try:
-        database.delete_board(user_id, board_id)
-    except BoardItemNotFoundError as error:
-        raise not_found(error) from error
+    database.delete_board(user_id, board_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -280,8 +264,6 @@ def delete_board(board_id: int, user_id: UserId) -> Response:
 def chat_with_board_ai(board_id: int, payload: ChatRequest, user_id: UserId) -> dict[str, object]:
     try:
         output, updated_board = request_ai_update(user_id, board_id, payload)
-    except BoardItemNotFoundError as error:
-        raise not_found(error) from error
     except AIOutputError as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)
@@ -294,40 +276,42 @@ def chat_with_board_ai(board_id: int, payload: ChatRequest, user_id: UserId) -> 
 
 @app.post("/api/boards/{board_id}/columns", status_code=status.HTTP_201_CREATED)
 def create_board_column(
-    board_id: int, payload: ColumnCreateRequest, user_id: UserId
+    board_id: int, payload: ColumnRequest, user_id: UserId
 ) -> dict[str, object]:
-    return change_board(user_id, board_id, CreateColumn(title=payload.title))
+    return database.apply_operations(user_id, board_id, [CreateColumn(title=payload.title)])
 
 
 @app.patch("/api/boards/{board_id}/columns/{column_id}")
 def rename_board_column(
-    board_id: int, column_id: int, payload: ColumnRenameRequest, user_id: UserId
+    board_id: int, column_id: int, payload: ColumnRequest, user_id: UserId
 ) -> dict[str, object]:
-    return change_board(user_id, board_id, RenameColumn(columnId=column_id, title=payload.title))
+    return database.apply_operations(
+        user_id, board_id, [RenameColumn(columnId=column_id, title=payload.title)]
+    )
 
 
 @app.post("/api/boards/{board_id}/columns/{column_id}/move")
 def move_board_column(
     board_id: int, column_id: int, payload: PositionRequest, user_id: UserId
 ) -> dict[str, object]:
-    return change_board(
-        user_id, board_id, MoveColumn(columnId=column_id, position=payload.position)
+    return database.apply_operations(
+        user_id, board_id, [MoveColumn(columnId=column_id, position=payload.position)]
     )
 
 
 @app.delete("/api/boards/{board_id}/columns/{column_id}")
 def delete_board_column(board_id: int, column_id: int, user_id: UserId) -> dict[str, object]:
-    return change_board(user_id, board_id, DeleteColumn(columnId=column_id))
+    return database.apply_operations(user_id, board_id, [DeleteColumn(columnId=column_id)])
 
 
 @app.post("/api/boards/{board_id}/cards", status_code=status.HTTP_201_CREATED)
 def create_board_card(
     board_id: int, payload: CardCreateRequest, user_id: UserId
 ) -> dict[str, object]:
-    return change_board(
+    return database.apply_operations(
         user_id,
         board_id,
-        CreateCard(columnId=payload.column_id, title=payload.title, details=payload.details),
+        [CreateCard(columnId=payload.column_id, title=payload.title, details=payload.details)],
     )
 
 
@@ -335,26 +319,26 @@ def create_board_card(
 def update_board_card(
     board_id: int, card_id: int, payload: CardChanges, user_id: UserId
 ) -> dict[str, object]:
-    return change_board(
+    return database.apply_operations(
         user_id,
         board_id,
-        UpdateCard(cardId=card_id, title=payload.title, details=payload.details),
+        [UpdateCard(cardId=card_id, title=payload.title, details=payload.details)],
     )
 
 
 @app.delete("/api/boards/{board_id}/cards/{card_id}")
 def delete_board_card(board_id: int, card_id: int, user_id: UserId) -> dict[str, object]:
-    return change_board(user_id, board_id, DeleteCard(cardId=card_id))
+    return database.apply_operations(user_id, board_id, [DeleteCard(cardId=card_id)])
 
 
 @app.post("/api/boards/{board_id}/cards/{card_id}/move")
 def move_board_card(
     board_id: int, card_id: int, payload: CardMoveRequest, user_id: UserId
 ) -> dict[str, object]:
-    return change_board(
+    return database.apply_operations(
         user_id,
         board_id,
-        MoveCard(cardId=card_id, columnId=payload.column_id, position=payload.position),
+        [MoveCard(cardId=card_id, columnId=payload.column_id, position=payload.position)],
     )
 
 

@@ -1,6 +1,4 @@
-"use client";
-
-import { FormEvent, useState } from "react";
+import { useState, type FormEvent } from "react";
 import {
   CircleAlert,
   LoaderCircle,
@@ -8,7 +6,7 @@ import {
   SendHorizontal,
   Sparkles,
 } from "lucide-react";
-import { redirectIfUnauthorized } from "@/lib/api";
+import { apiRequest, jsonRequest } from "@/lib/api";
 import type { BoardData } from "@/lib/kanban";
 
 type ChatMessage = {
@@ -42,16 +40,10 @@ export const ChatSidebar = ({ boardId, onBoardUpdate }: ChatSidebarProps) => {
     setError("");
     setIsSending(true);
     try {
-      const response = await fetch(`/api/boards/${boardId}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: question, history: messages.slice(-12) }),
-      });
-      redirectIfUnauthorized(response);
-      if (!response.ok) {
-        throw new Error("Unable to send message.");
-      }
-      const result = (await response.json()) as ChatResponse;
+      const result = await apiRequest<ChatResponse>(
+        `/api/boards/${boardId}/chat`,
+        jsonRequest("POST", { message: question, history: messages.slice(-12) })
+      );
       setMessages((previous) => [
         ...previous,
         { role: "user", content: question },

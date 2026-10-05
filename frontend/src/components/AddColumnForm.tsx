@@ -1,5 +1,7 @@
+import clsx from "clsx";
 import { useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
+import { compactInputClass, FormActions } from "@/components/FormActions";
 
 type AddColumnFormProps = {
   onAdd: (title: string) => void;
@@ -16,10 +18,11 @@ export const AddColumnForm = ({ onAdd }: AddColumnFormProps) => {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!title.trim()) {
+    const nextTitle = title.trim();
+    if (!nextTitle) {
       return;
     }
-    onAdd(title.trim());
+    onAdd(nextTitle);
     close();
   };
 
@@ -47,26 +50,12 @@ export const AddColumnForm = ({ onAdd }: AddColumnFormProps) => {
         onKeyDown={(event) => event.key === "Escape" && close()}
         placeholder="Column title"
         aria-label="New column title"
-        className="w-full rounded-md border border-[var(--stroke-strong)] bg-white px-2.5 py-1.5 text-sm font-semibold text-[var(--navy-dark)] outline-none transition placeholder:text-[var(--gray-text)] focus:border-[var(--primary-blue)] focus:ring-2 focus:ring-[var(--primary-blue)]/20"
+        className={clsx(compactInputClass, "font-semibold")}
         maxLength={120}
         required
         autoFocus
       />
-      <div className="flex items-center gap-2">
-        <button
-          type="submit"
-          className="rounded-md bg-[var(--secondary-purple)] px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
-        >
-          Add column
-        </button>
-        <button
-          type="button"
-          onClick={close}
-          className="rounded-md px-3 py-1.5 text-xs font-semibold text-[var(--text-muted)] transition hover:bg-[var(--surface-muted)] hover:text-[var(--navy-dark)]"
-        >
-          Cancel
-        </button>
-      </div>
+      <FormActions submitLabel="Add column" onCancel={close} />
     </form>
   );
 };

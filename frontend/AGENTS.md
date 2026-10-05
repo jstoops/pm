@@ -14,6 +14,7 @@ This directory contains the static-exported frontend. It uses Next.js 16, React 
 - `src/components/KanbanCardPreview.tsx` is used for the drag overlay.
 - `src/components/NewCardForm.tsx` collects a title and optional details for a new card.
 - `src/components/ChatSidebar.tsx` renders the AI conversation for one board, posts to `/api/boards/{id}/chat`, and returns AI board updates to `KanbanBoard`.
+- `src/components/FormActions.tsx` holds the input style and Submit/Cancel buttons shared by the compact inline forms (new board, new column, new card, card edit). `src/components/LoadState.tsx` is the loading/retry view and error banner shared by `Workspace` and `KanbanBoard`.
 - `src/components/AuthShell.tsx` is the split layout shared by `/login` (`LoginForm`) and `/register` (`RegisterForm`). `src/components/FormField.tsx` is the shared labelled input.
 - `src/components/AccountSettings.tsx` is the `/account` page: profile summary, password change, and account deletion.
 - `src/lib/kanban.ts` defines `Card`, `Column`, `BoardData`, `BoardSummary`, and drag/drop move logic.

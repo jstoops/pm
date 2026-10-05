@@ -1,10 +1,3 @@
-/** Sends the user back to sign in when the session has expired. */
-export const redirectIfUnauthorized = (response: Response) => {
-  if (response.status === 401) {
-    window.location.assign("/login");
-  }
-};
-
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -15,12 +8,14 @@ export class ApiError extends Error {
 }
 
 /**
- * Fetches a JSON API route. Redirects to sign in on 401 and throws an ApiError
- * carrying the server's `detail` message for any other failure.
+ * Fetches a JSON API route. Redirects to sign in on 401 (an expired session)
+ * and throws an ApiError carrying the server's `detail` message for any failure.
  */
 export const apiRequest = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, init);
-  redirectIfUnauthorized(response);
+  if (response.status === 401) {
+    window.location.assign("/login");
+  }
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
     throw new ApiError(

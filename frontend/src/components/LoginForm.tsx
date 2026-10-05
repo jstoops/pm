@@ -2,6 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 import { FormField, submitButtonClass } from "@/components/FormField";
+import { jsonRequest } from "@/lib/api";
 
 type LoginFormProps = {
   onAuthenticated?: () => void | Promise<void>;
@@ -11,9 +12,7 @@ const redirectToBoard = () => {
   window.location.assign("/");
 };
 
-export const LoginForm = ({
-  onAuthenticated = redirectToBoard,
-}: LoginFormProps) => {
+export const LoginForm = ({ onAuthenticated = redirectToBoard }: LoginFormProps) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,12 +24,8 @@ export const LoginForm = ({
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-
+      // Not apiRequest: a 401 here means wrong credentials, not an expired session.
+      const response = await fetch("/api/auth/login", jsonRequest("POST", { username, password }));
       if (!response.ok) {
         setError("Sign in failed. Check your username and password.");
         return;
